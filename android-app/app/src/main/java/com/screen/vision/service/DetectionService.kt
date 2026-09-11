@@ -45,7 +45,7 @@ class DetectionService : Service() {
 
     private fun initComponents() {
         socketClient = UnixSocketClient()
-        preprocessor = Preprocessor(inputSize = 640)
+        preprocessor = Preprocessor(inputSize = 960)
         // detector/postProcessor 由 SDK 传入 classNames 后初始化
     }
 
@@ -77,11 +77,11 @@ class DetectionService : Service() {
             _results.emit(emptyList())
             return
         }
-        Log.i(TAG, "Connected, starting 30fps loop")
+        Log.i(TAG, "Connected, starting 15fps loop")
 
         var frameCount = 0
         var totalTimeUs = 0L
-        val targetFrameTimeNs = 33_333_333L
+        val targetFrameTimeNs = 66_666_666L  # 15fps
 
         while (isActive) {
             val frameStart = System.nanoTime()
@@ -135,7 +135,7 @@ class DetectionService : Service() {
     private fun buildNotification(): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Screen Vision")
-            .setContentText("30fps detection running...")
+            .setContentText("15fps detection running...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -148,10 +148,6 @@ class DetectionService : Service() {
         const val EXTRA_CLASS_NAMES = "class_names"
         const val EXTRA_MODEL_PATH = "model_path"
 
-        val DEFAULT_CLASS_NAMES = arrayOf(
-            "joystick", "fire_btn", "aim_btn", "reload_btn",
-            "jump_btn", "crouch_btn", "minimap", "health_bar",
-            "operator_skill", "pickup_btn", "backpack_btn", "enemy",
-        )
+        val DEFAULT_CLASS_NAMES = arrayOf("enemy")
     }
 }

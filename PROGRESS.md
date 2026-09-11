@@ -2,7 +2,7 @@
 
 ## 一、项目概述
 
-三角洲行动 (Delta Force) 局内元素实时检测系统。在 root 过的 Android 手机上运行，通过 YOLOv8nano 以 30fps 检测屏幕中的游戏元素并返回中心坐标，支持通过 root 权限注入触控事件。
+三角洲行动 (Delta Force) **敌方干员视觉检测系统**。在 root 过的 Android 手机上运行，通过 YOLOv8s-P2 以 15fps 检测屏幕中的敌方干员（含极远距离小目标）并返回中心坐标，支持通过 root 权限注入触控事件。
 
 ---
 
@@ -11,9 +11,9 @@
 ### 2.1 决策树
 
 ```
-目标类型 ── 三角洲行动 (Delta Force) FPS 游戏元素
+目标类型 ── 三角洲行动 (Delta Force) 敌方干员检测
                │
-帧率要求 ── 30fps (33ms/帧)
+帧率要求 ── 15fps (66ms/帧) — 精度优先
                │
 权限模型 ── Root（全部能力）
   ├─ SurfaceFlinger Native 守护进程截图 (minicap 思路, C 实现)
@@ -21,11 +21,13 @@
   └─ Root 注入触控事件 (su -c input tap)
                │
 推理引擎 ── TFLite + GPU Delegate
-  ├─ GPU 可用 → GPU Delegate (最快 ~15ms)
+  ├─ GPU 可用 → GPU Delegate (最快 ~50ms)
   └─ GPU 不可用 → XNNPACK CPU 回退
                │
-模型架构 ── YOLOv8nano
-  ├─ 输入尺寸: 640×640 LetterBox
+模型架构 ── YOLOv8s-P2 (小目标优化)
+  ├─ 输入尺寸: 960×960 LetterBox (2.25x 像素 vs 640)
+  ├─ P2 检测头: 4x 下采样, 160×160 网格 (捕捉极小目标)
+  ├─ 类别: 单类 enemy (全部容量专注干员检测)
   ├─ 输出: [1, 4+1+numClasses, numDetections]
   └─ NMS: IoU ≥ 0.5, 置信度 ≥ 0.45
                │
@@ -55,13 +57,13 @@ SDK 形态 ── Android 前台 Service
 │ Layer 3: Android Service                            │
 │ DetectionService (前台 Service)                      │
 │                                                      │
-│   30fps 检测主循环:                                   │
+│   15fps 检测主循环:                                   │
 │   ┌─────────┐  ┌──────────┐  ┌───────────┐         │
 │   │ Socket  │→ │ TFLite   │→ │ PostProc  │         │
 │   │ 收帧     │  │ 推理      │  │ NMS+映射   │         │
 │   └─────────┘  └──────────┘  └───────────┘         │
 │        ↓              ↓              ↓               │
-│   ~2ms            ~15ms           ~2ms              │
+│    ~2ms           ~50ms           ~3ms              │
 │                                                      │
 │   保活: 前台通知 + START_STICKY                       │
 │   协程: Dispatchers.Default + SupervisorJob           │
@@ -75,7 +77,7 @@ SDK 形态 ── Android 前台 Service
 │   │ Screenshot    │  │ (逐帧 push 到 Java 层)    │    │
 │   └──────────────┘  └──────────────────────────┘    │
 │        ↓                       ↓                     │
-│   ~8ms                    ~2ms                       │
+│    ~8ms                    ~2ms                       │
 │                                                      │
 │   通信协议:                                           │
 │   [4bytes: width][4bytes: height][RGBA pixels]       │
@@ -96,19 +98,35 @@ SDK 形态 ── Android 前台 Service
 └─────────────────────────────────────────────────────┘
 ```
 
-### 2.3 数据流 (30fps, 每帧 ~33ms)
+### 2.3 数据流 (15fps, 每帧 ~66ms)
 
 ```
 ┌──────┐   Socket    ┌──────────┐   ByteBuffer   ┌──────────┐
 │ Daemon │───RGBA──→│  Kotlin   │───float32────→│  TFLite  │
-│ (C)    │  ~2ms    │ Service   │   ~2ms preproc │  GPU Inf │
+│ (C)    │  ~2ms    │ Service   │  ~3ms preproc  │  GPU Inf │
 └──────┘           └──────────┘                 └──────────┘
-                                                     │ ~15ms
+                                                     │ ~50ms
 ┌──────┐   List<     ┌──────────┐   float[][]        │
 │  SDK  │←─Result──│ PostProc │←────────────────────┘
-│ Flow  │  ~2ms    │  NMS     │
+│ Flow  │  ~3ms    │  NMS     │
 └──────┘           └──────────┘
 ```
+
+### 2.4 小目标检测策略
+
+敌方干员可能小至 5-10 像素 (远距离)。为此:
+
+```
+输入图像 960×960
+    │
+特征金字塔:
+    ├─ P5: 20×20 网格  (32x 下采样) → 大目标
+    ├─ P4: 40×40 网格  (16x 下采样) → 中目标
+    ├─ P3: 80×80 网格  (8x 下采样)  → 小目标
+    └─ P2: 160×160 网格 (4x 下采样) → 极小目标 ★
+```
+
+相比标准 YOLOv8nano，P2 头在 4x 下采样 (而非 8x) 检测，每个网格单元仅覆盖 4×4 原始像素，能捕获极小的目标。
 
 ---
 
@@ -122,16 +140,16 @@ SDK 形态 ── Android 前台 Service
 | `README.md` | 已完成 |
 | 完整目录结构 | 已完成 |
 
-### Phase 1 — 训练管线 (代码层完成，数据层未开始)
+### Phase 1 — 训练管线 (代码层完成, 数据层未开始)
 
 | 文件 | 功能 | 行数 |
 |------|------|------|
-| `training/train.py` | YOLOv8nano 训练入口 (MPS/CPU 自适应) | ~60 |
+| `training/train.py` | YOLOv8s-P2 训练入口, 960x960, 150 epochs | ~60 |
 | `training/export_tflite.py` | PyTorch → TFLite 导出 (fp16/int8) | ~45 |
 | `training/visualize.py` | 标注可视化检查 (从 dataset.yaml 动态读取) | ~90 |
-| `training/data/dataset.yaml` | 12 类元素定义 | 16 |
+| `training/data/dataset.yaml` | 单类 enemy 定义 | 16 |
 
-### Phase 2 — Native 守护进程 (代码层完成，未编译)
+### Phase 2 — Native 守护进程 (代码层完成, 未编译)
 
 | 文件 | 功能 | 行数 |
 |------|------|------|
@@ -142,14 +160,14 @@ SDK 形态 ── Android 前台 Service
 | `native-daemon/Android.mk` | NDK 备选构建 | ~12 |
 | `native-daemon/build.sh` | 一键编译 + adb 推送 | ~40 |
 
-### Phase 3 — Android Service (代码层完成，未编译)
+### Phase 3 — Android Service (代码层完成, 未编译)
 
 | 文件 | 功能 | 行数 |
 |------|------|------|
 | `api/ScreenVisionSDK.kt` | SDK 唯一入口 (start/observe/tap/stop) | ~120 |
-| `service/DetectionService.kt` | 前台 Service, 30fps 检测循环 | ~155 |
+| `service/DetectionService.kt` | 前台 Service, 15fps 检测循环 | ~155 |
 | `detection/YOLODetector.kt` | TFLite + GPU Delegate, 自动推导 numClasses | ~80 |
-| `detection/Preprocessor.kt` | Bitmap → 640×640 LetterBox → normalized float32 | ~70 |
+| `detection/Preprocessor.kt` | Bitmap → 960×960 LetterBox → normalized float32 | ~70 |
 | `detection/PostProcessor.kt` | NMS + 模型→原始坐标映射 | ~115 |
 | `socket/UnixSocketClient.kt` | LocalSocket AF_UNIX 连接守护进程 | ~80 |
 | `update/ModelUpdater.kt` | 远端模型检测 + 下载替换 | ~115 |
@@ -166,9 +184,9 @@ SDK 形态 ── Android 前台 Service
 
 | 任务 | 说明 | 预估 |
 |------|------|------|
-| 截取三角洲行动局内截图 | 不同地图/模式/光照, 200-500 张 | 2h |
-| 用 LabelImg 标注 12 类元素 | 每张图标注可见元素, 不去标不可见的 | 4-6h |
-| 运行 `python train.py` | M1 MPS 约 20min/80epochs, CPU 约 1-2h | 1-2h |
+| 截取三角洲行动局内截图 | 不同地图/模式/距离, 200-500 张, **优先远距小目标** | 2h |
+| 用 LabelImg 标注敌方干员 | 标注 ALL 可见的敌方干员, **含极小目标** | 4-6h |
+| 运行 `python train.py` | YOLOv8s-P2, 960x960, 150 epochs. M1 MPS ~1h, CPU ~3h | 1-3h |
 | 导出 TFLite 并放入 assets | `export_tflite.py` → `android-app/app/src/main/assets/model.tflite` | 10min |
 | 训练数据检查与补标 | `visualize.py` 检查, 补漏标/误标 | 1h |
 
@@ -188,7 +206,7 @@ SDK 形态 ── Android 前台 Service
 | Android Studio 打开 android-app/ | 等待 Gradle sync + 下载依赖 | 10min |
 | 编译 debug APK | 确保 tflite + gpu 依赖正确 | 10min |
 | 安装到设备 + 授权前台通知 | `adb install` | 5min |
-| 验证 30fps 检测循环 | logcat `DetectionService` 检查帧率 | 30min |
+| 验证 15fps 检测循环 | logcat `DetectionService` 检查帧率 | 30min |
 
 ### Phase 4 — 集成联调 (第 6-8 天)
 
@@ -214,11 +232,12 @@ SDK 形态 ── Android 前台 Service
 | 风险 | 影响 | 缓解措施 |
 |------|------|----------|
 | SurfaceFlinger API 随 Android 版本变化 | 截图失败 | screencap.c 内置 fallback 方案 (`screencap -p` 命令) |
-| GPU Delegate 部分机型不支持 | 掉帧到 10-15fps | 自动回退 XNNPACK CPU |
-| 游戏大版本更新 UI 布局 | 模型全部失效 | ModelUpdater 热更新机制 |
+| GPU Delegate 部分机型不支持 | 掉帧到 5-8fps | 自动回退 XNNPACK CPU |
+| YOLOv8s-P2 960x960 推理超 50ms | 不到 15fps | 退而用 640x640, 或换 YOLOv8n-P2 |
+| 游戏大版本更新 UI/角色模型 | 检测失效 | ModelUpdater 热更新机制 |
 | Root 权限非普遍可用 | 无法启动守护进程 | 项目定位即为 Root 方案, 不妥协 |
+| 远距小目标误检/漏检 | 精度不达标 | 增量采集远距样本 + 针对性标注训练 |
 | 游戏截图可能触发安全检测 | 账号封禁风险 | **用户自行承担风险, 项目仅提供技术方案** |
-| 后台 Service 被系统杀死 | 检测中断 | 前台通知保活 + START_STICKY 重启 |
 
 ---
 

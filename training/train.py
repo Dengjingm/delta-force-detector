@@ -15,10 +15,10 @@ def train():
     # ── 配置区 ──────────────────────────────────────────
     project_root = Path(__file__).parent
     data_yaml = str(project_root / "data" / "dataset.yaml")
-    model_name = "yolov8n.pt"  # nano 版本预训练权重
-    epochs = 100
+    model_name = "yolov8s-p2.pt"  # small + P2 小目标检测头
+    epochs = 150                    # 单类小目标需更多迭代收敛
     batch_size = 16
-    imgsz = 640
+    imgsz = 960                     # 更高分辨率，远距敌人更多像素
 
     # Apple Silicon 用 MPS，否则 CPU
     device = "mps" if torch.backends.mps.is_available() else "cpu"
