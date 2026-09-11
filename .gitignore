@@ -1,0 +1,29 @@
+# Training
+training/__pycache__/
+training/runs/
+training/data/images/train/*.jpg
+training/data/images/train/*.png
+training/data/images/val/
+training/data/labels/val/
+*.pyc
+
+# Native daemon build
+native-daemon/build/
+native-daemon/libs/
+native-daemon/obj/
+
+# Android
+android-app/.gradle/
+android-app/build/
+android-app/app/build/
+android-app/local.properties
+*.iml
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Credentials
+.env
+*.key

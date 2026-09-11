@@ -1,0 +1,22 @@
+# 三角洲行动 (Delta Force) 局内元素检测 — 数据集配置
+# 训练前根据实际截图中可见的元素调整
+
+path: ./data
+train: images/train
+val: images/val
+
+nc: 12
+
+names:
+  0: joystick           # 移动摇杆 (左下)
+  1: fire_btn           # 开火按钮 (右下)
+  2: aim_btn            # 瞄准/开镜
+  3: reload_btn         # 换弹
+  4: jump_btn           # 跳跃
+  5: crouch_btn         # 下蹲
+  6: minimap            # 小地图 (左上)
+  7: health_bar         # 血条
+  8: operator_skill     # 干员技能
+  9: pickup_btn         # 拾取/交互
+  10: backpack_btn      # 背包
+  11: enemy             # 敌人
