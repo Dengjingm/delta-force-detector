@@ -1,11 +1,29 @@
-ultralytics>=8.0.0
-torch>=2.0.0
-torchvision>=0.15.0
-tensorflow>=2.13.0
-opencv-python>=4.8.0
-numpy>=1.24.0
-pillow>=10.0.0
-matplotlib>=3.7.0
-pyyaml>=6.0
-tqdm>=4.65.0
-labelimg>=1.8.6
+# Delta Force 训练/导出依赖（CPU 版，已锁定精确版本）
+# 验证环境：Linux x86_64 + Python 3.11，本仓库 venv-training 已跑通 import。
+#
+# torch/torchvision 为官方 CPU wheel（无 CUDA），版本带 +cpu 后缀，
+# 只存在于 pytorch 官方 cpu index，故加 --extra-index-url。
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.14.0+cpu
+torchvision==0.29.0+cpu
+ultralytics==8.4.150
+tensorflow==2.21.0
+
+# numpy 锁 1.26.4（已验证组合）；与 numpy 2.x 的兼容性未在本仓库验证
+numpy==1.26.4
+
+# opencv 用 headless 版（无 libGL 依赖，适配无头/服务器）。
+# 坑：ultralytics 8.4.150 硬依赖 opencv-python(>=4.7.0)，pip 会同时装下
+# 两个 cv2（opencv-python 与 headless 互覆文件）。无头机装完后执行：
+#   pip uninstall -y opencv-python
+opencv-python-headless==4.11.0.86
+
+pillow==12.3.0
+matplotlib==3.11.2
+pyyaml==6.0.3
+tqdm==4.70.1
+
+# labelimg（交互式标注 GUI）已移除：仅标注用途、无头机不可用，按需手动安装：
+#   pip install labelimg
