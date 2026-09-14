@@ -13,7 +13,8 @@
 | 截图和帧格式 | [screencap.c](native-daemon/screencap.c)、[screencap.h](native-daemon/screencap.h) | Socket 两端、像素格式、stride、旋转 |
 | Socket 协议 | [socket_server.c](native-daemon/socket_server.c)、[UnixSocketClient.kt](android-app/app/src/main/java/com/screen/vision/socket/UnixSocketClient.kt) | main 循环、取消/重连、最大帧尺寸 |
 | v2 帧协议编解码 | [frame_protocol.c](native-daemon/frame_protocol.c)、[frame_protocol.h](native-daemon/frame_protocol.h)、[contracts/fixtures](contracts/fixtures/README.md) | 64 字节 LE 头、校验、黄金字节；尚未接入 socket_server |
-| 生命周期与结果订阅 | [ScreenVisionSDK.kt](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt)、[DetectionService.kt](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt) | Manifest、Binder、Flow、daemon 就绪与退出 |
+| 生命周期与结果订阅 | [ScreenVisionSDK.kt](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt)、[DetectionService.kt](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt)、[ResultBus.kt](android-app/app/src/main/java/com/screen/vision/api/ResultBus.kt) | Manifest、daemon 就绪与退出、结果通路 |
+| 自动瞄准 | [AimController.kt](android-app/app/src/main/java/com/screen/vision/aim/AimController.kt)、[TouchInjector.kt](android-app/app/src/main/java/com/screen/vision/aim/TouchInjector.kt)、[AimConfig.kt](android-app/app/src/main/java/com/screen/vision/aim/AimConfig.kt) | 目标选择、注入方向/灵敏度、DetectionService 接入 |
 | 坐标与置信度 | [Preprocessor.kt](android-app/app/src/main/java/com/screen/vision/detection/Preprocessor.kt)、[PostProcessor.kt](android-app/app/src/main/java/com/screen/vision/detection/PostProcessor.kt) | 模型输出单位、DetectResult、原图尺寸 |
 | 模型更新 | [ModelUpdater.kt](android-app/app/src/main/java/com/screen/vision/update/ModelUpdater.kt) | SDK 选择路径、detector 加载方式、回滚 |
 | 构建与打包 | [CMakeLists.txt](native-daemon/CMakeLists.txt)、[build.sh](native-daemon/build.sh)、[app/build.gradle.kts](android-app/app/build.gradle.kts) | 根 Gradle 配置、NDK、二进制资源路径 |
@@ -68,12 +69,16 @@
             ├── res/raw/screen_visiond  arm64 daemon 二进制（NDK 交叉编译产物）
             └── java/com/screen/vision/
                 ├── VisionApp.kt                 仅保存 Application 实例
-                ├── MainActivity.kt              诊断入口：状态、启动/停止
-                ├── api/ScreenVisionSDK.kt       start / observe / tap / swipe / stop
-                ├── service/DetectionService.kt  初始化、收帧、推理与 Flow
-                ├── detection/YOLODetector.kt    assets 模型映射与 TFLite（XNNPACK CPU）
-                ├── detection/Preprocessor.kt    LetterBox、RGB float32
-                ├── detection/PostProcessor.kt  输出解析、NMS、原图中心坐标
+                ├── MainActivity.kt              诊断入口：状态、启动/停止、自动瞄准开关
+                ├── api/ScreenVisionSDK.kt       start(autoAim) / observe / tap / swipe / stop
+                ├── api/ResultBus.kt             进程级结果总线（Service→SDK/瞄准）
+                ├── service/DetectionService.kt  收帧、推理、发布 ResultBus、驱动瞄准
+                ├── detection/YOLODetector.kt    C02 契约推理（[1,S,S,3]→[1,N,6]，XNNPACK CPU）
+                ├── detection/Preprocessor.kt    C03 逐轴 LetterBox、RGB float32
+                ├── detection/PostProcessor.kt   C02 归一化 xyxy_score_class → 原图中心
+                ├── aim/AimConfig.kt             瞄准参数
+                ├── aim/TouchInjector.kt         root input swipe 注入
+                ├── aim/AimController.kt         目标选择、增益+死区+步长、节拍注入
                 ├── socket/UnixSocketClient.kt   读满帧头和像素，创建 Bitmap
                 ├── update/ModelUpdater.kt       查询版本、下载缓存
                 └── model/DetectResult.kt        elementId / x / y / confidence
@@ -105,21 +110,19 @@ Gradle Wrapper（8.7）与 `MainActivity` 诊断入口已落地，debug APK 可�
 ### 3.2 在线帧与检测结果
 
 ```text
-调用方 → ScreenVisionSDK.start(context, classNames, modelPath)
+调用方 → ScreenVisionSDK.start(context, classNames, modelPath, autoAim)
   ├─ launchDaemon() → su -c /data/local/tmp/screen-visiond
   │    main() → screencap_init() → socket_server_init() → accept()
   │      循环：screencap_capture() → socket_server_send_frame() → 节流
-  │      默认 libgui 调用不完整、getPixels 未绑定；fallback 把 PNG 当 raw
-  │      默认路径失败不会运行时切换 fallback
+  │      screencap_capture() 用 popen 调 screencap 读 raw 流（12 字节头→RGBA8888）
   ├─ ModelUpdater.checkAndUpdate()         ← 更新结果未用于选择加载路径
   ├─ startForegroundService(intent)
-  │    onCreate() → 通知、Socket、Preprocessor(960)
-  │    onStartCommand() → YOLODetector / PostProcessor → runDetectionLoop()
-  │      connect → readFrame → preprocess → detect → process → Service.results
-  └─ 延时 500ms 后 bindService()
-       Service.onBind() 返回 Binder（已修正，不再返回 Flow）
-       onServiceConnected() 只记日志
-       × 未将 Service.results 转发给 SDK.observe()
+  │    onCreate() → 通知、Socket
+  │    onStartCommand() → initModel() → YOLODetector / Preprocessor(detector.inputSize) / PostProcessor
+  │      runDetectionLoop() → connect → readFrame → preprocess → detect → process
+  │        → ResultBus.publish(detections) → aimController?.onFrame(...)
+  └─ observe() 返回 ResultBus.results（进程级单例，Service 发布、调用方订阅）
+       （SDK 仍保留延时 bindService，但结果不再经 Binder 转发，Binder 路径已冗余）
 ```
 
 `setResultSource()` 存在但没有调用点。`stop()` 会解绑、停止 Service 并执行 `killall`，没有保存和回收结果收集任务；启动链路也没有 daemon 安装解包、就绪握手或可靠的实例管理。
@@ -153,10 +156,10 @@ Gradle Wrapper（8.7）与 `MainActivity` 诊断入口已落地，debug APK 可�
 
 | 环节 | 当前假设 | 必须核实/修复 |
 |---|---|---|
-| Preprocessor | 居中 LetterBox，填充值 114，RGB / 255，float32 NHWC 字节缓冲 | Service 固定传入 960；未用 `detector.inputSize` 驱动，也不支持量化 I/O |
-| YOLODetector | 仅从 assets `openFd()` 加载；输出三维；`numClasses = shape[1] - 5` | 无真实模型证据，不能靠维度猜类别；输出数组形状也需与 tensor 匹配 |
-| PostProcessor | 扁平化逐框 `cx,cy,w,h,objectness,class...`；读 `offset+5`；本地 NMS | 与导出 `nms=True` 冲突；也不符合常见 YOLOv8 raw 输出布局 |
-| 坐标回映 | 中心减 padding，再除 scale；返回原图整数坐标 | 导出坐标单位待检查；检查横竖屏、取整缩放、边界 `width-1/height-1` |
+| Preprocessor | C03：居中 LetterBox，填充 114，逐轴 scale，`max(1,floor)`，RGB/255 float32 NHWC | 由 `detector.inputSize` 驱动；resize 用 Android bilinear，与 Ultralytics resize 的算子级差异待黄金输入固定容差 |
+| YOLODetector | 加载时校验 `[1,S,S,3]`/`[1,N,6]`；直接 ByteBuffer 输出 | 以真实导出 tensor 核验 shape/dtype/量化/NMS；当前无真实模型证据 |
+| PostProcessor | C02：解析归一化 `x1,y1,x2,y2,score,classId`，score≤0 padding、中心落 padding 丢弃，回映原图中心 | 真实模型坐标单位/NMS 状态仍需核验；坏输出判帧失败的诊断路径未接 SDK 错误码 |
+| 坐标回映 | `(x-left)/scaleX`、`(y-top)/scaleY`，`floor` 后夹取 `[0,W-1]×[0,H-1]` | 横竖屏、奇数 padding、越界、纯 padding 的边界覆盖待真机 |
 | DetectResult | 类别名、中心 x/y、置信度 | 无 bbox、frameId、时间戳或稳定目标 ID；`elementId` 是类别而非实例 ID |
 
 导出 fp16 权重不代表输入 tensor 为 fp16；int8 选项也不能证明模型 I/O 类型。先检查真实模型的 shape、dtype、量化参数、输出布局、坐标单位、类别和 NMS 状态，再实现解析。当前仓库没有可宣称为正式契约的模型文件。
@@ -166,7 +169,7 @@ Gradle Wrapper（8.7）与 `MainActivity` 诊断入口已落地，debug APK 可�
 | 路径/配置 | 当前用途与状态 |
 |---|---|
 | `/data/local/tmp/screen-visiond` | SDK 启动的设备二进制；依赖人工/脚本部署 |
-| `/data/local/tmp/sv_frame.raw` | fallback 临时文件名，但 `screencap -p` 实际输出 PNG |
+| `/data/local/tmp/sv_frame.raw` | 已移除：screencap 改由 `popen` 读 stdout，不再落临时文件 |
 | `native-daemon/build/screen-visiond` | NDK arm64 构建产物（M1 已生成，约 32K） |
 | `android-app/app/src/main/res/raw/screen_visiond` | build.sh 的复制目标（M1 已生成，资源名已去除连字符） |
 | `android-app/app/src/main/assets/model.tflite` | 预期内置模型；不存在 |

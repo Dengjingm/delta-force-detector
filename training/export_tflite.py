@@ -19,12 +19,12 @@ def export_tflite(weights: str, int8: bool = False):
     export_path = Path(weights).parent
 
     # ── 导出 TFLite ────────────────────────────────────
-    # imgsz 必须与训练时一致 (960)
+    # imgsz 必须与训练时一致 (MVP 用 640;对齐 P2/960 时同步改回)
     # int8 量化：体积更小、速度略快，但精度轻微下降
     # fp16 量化：精度几乎无损，体积减半
     model.export(
         format="tflite",
-        imgsz=960,
+        imgsz=640,
         int8=int8,
         half=not int8,
         nms=True,         # 内置 NMS，后处理更简单

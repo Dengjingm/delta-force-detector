@@ -1,9 +1,11 @@
 /*
- * screencap.c — SurfaceFlinger 截图实现
+ * screencap.c — 屏幕截图实现（root 调用 screencap 输出 raw 像素流）
  *
- * 通过 Android SurfaceFlinger service 获取屏幕帧。
- * 需要在 root 权限下运行。使用 ScreenshotClient API
- * (Android 10+, 对应 libgui 中的 SurfaceFlinger 接口)。
+ * 通过 root 权限调用 /system/bin/screencap（不带 -p、不带文件名），
+ * 其向 stdout 输出 raw 像素流:
+ *   [uint32 width][uint32 height][uint32 format][raw pixels]
+ * 读取 12 字节头后按 format 确定每像素字节数，读取像素并统一转换为
+ * 紧密排列的 RGBA8888，供上层按 width*height*4 消费。
  *
  * 编译目标: aarch64-linux-android (API 28+)
  */
@@ -13,191 +15,161 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dlfcn.h>
 
 #define LOG_TAG "sv-screencap"
 #include <android/log.h>
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-/*
- * 实现策略:
- *
- * 方案 A (推荐): 通过 dlopen 动态链接 libgui.so,
- * 调用 ScreenshotClient 来获取屏幕帧。
- *
- * 方案 B (备选): 如果 ScreenshotClient API 在目标 Android
- * 版本上不可用, 退化为调用 system("screencap -p /tmp/frame.png")
- * 并读取文件。速度较慢 (~80ms) 但兼容性更好。
- *
- * 默认使用方案 A, 编译时定义 USE_SCREENCAP_FALLBACK 切换方案 B。
- */
+/* Android HAL_PIXEL_FORMAT 常量 (system/core/include/system/graphics.h) */
+#define HAL_PIXEL_FORMAT_RGBA_8888   1
+#define HAL_PIXEL_FORMAT_RGBX_8888   2
+#define HAL_PIXEL_FORMAT_RGB_888     3
+#define HAL_PIXEL_FORMAT_RGB_565     4
+#define HAL_PIXEL_FORMAT_BGRA_8888   5
 
-#ifdef USE_SCREENCAP_FALLBACK
-
-/* ── 方案 B: 通过 screencap 命令 ────────────────────── */
+#define SCREENCAP_BIN  "/system/bin/screencap"
+#define HEADER_WORDS   3   /* width, height, format */
+#define RGBA_BPP       4
 
 static FrameBuffer s_fb = {0};
-static uint8_t *s_buffer = NULL;
-static int s_buffer_size = 0;
+static uint8_t *s_raw = NULL;    /* 原始像素缓冲 */
+static size_t s_raw_size = 0;
+static uint8_t *s_rgba = NULL;   /* 转换后的 RGBA8888 缓冲 */
+static size_t s_rgba_size = 0;
 
 int screencap_init(void) {
-    LOGI("Using screencap fallback");
-    s_buffer_size = 1920 * 1080 * 4;  /* 足够容纳 1080p */
-    s_buffer = (uint8_t *)malloc(s_buffer_size);
-    if (!s_buffer) {
-        LOGE("Failed to allocate buffer");
-        return -1;
-    }
-    s_fb.pixels = s_buffer;
-    s_fb.width = 0;
-    s_fb.height = 0;
-    s_fb.stride = 0;
+    LOGI("screencap backend: raw screencap via popen");
     return 0;
 }
 
-const FrameBuffer *screencap_capture(void) {
-    /* 使用 screencap 命令截屏到临时文件 */
-    int ret = system("screencap -p /data/local/tmp/sv_frame.raw");
-    if (ret != 0) {
-        LOGE("screencap command failed: %d", ret);
-        return NULL;
+static int format_bpp(uint32_t format) {
+    switch (format) {
+        case HAL_PIXEL_FORMAT_RGBA_8888:
+        case HAL_PIXEL_FORMAT_RGBX_8888:
+        case HAL_PIXEL_FORMAT_BGRA_8888:
+            return 4;
+        case HAL_PIXEL_FORMAT_RGB_888:
+            return 3;
+        case HAL_PIXEL_FORMAT_RGB_565:
+            return 2;
+        default:
+            return -1;
     }
-
-    /* 读取 raw 文件前四个字节是宽高信息 */
-    FILE *f = fopen("/data/local/tmp/sv_frame.raw", "rb");
-    if (!f) {
-        LOGE("Failed to open screencap output");
-        return NULL;
-    }
-
-    /* screencap raw 格式: uint32_t width, uint32_t height, then RGBA pixels */
-    uint32_t header[2];
-    if (fread(header, sizeof(uint32_t), 2, f) != 2) {
-        LOGE("Failed to read screencap header");
-        fclose(f);
-        return NULL;
-    }
-
-    s_fb.width = (int)header[0];
-    s_fb.height = (int)header[1];
-    s_fb.stride = s_fb.width * 4;
-
-    int pixel_size = s_fb.width * s_fb.height * 4;
-    if (pixel_size > s_buffer_size) {
-        /* 重新分配更大的缓冲区 */
-        s_buffer = (uint8_t *)realloc(s_buffer, pixel_size);
-        s_buffer_size = pixel_size;
-        s_fb.pixels = s_buffer;
-    }
-
-    size_t read_bytes = fread(s_fb.pixels, 1, pixel_size, f);
-    fclose(f);
-
-    if ((int)read_bytes != pixel_size) {
-        LOGE("Incomplete pixel data: %zu/%d", read_bytes, pixel_size);
-        return NULL;
-    }
-
-    LOGI("Captured frame: %dx%d (%d bytes)",
-         s_fb.width, s_fb.height, pixel_size);
-    return &s_fb;
 }
 
-void screencap_release(void) {
-    free(s_buffer);
-    s_buffer = NULL;
-    s_fb.pixels = NULL;
-    LOGI("Screencap released");
-}
-
-#else  /* !USE_SCREENCAP_FALLBACK */
-
-/* ── 方案 A: ScreenshotClient API (需 root + libgui) ── */
-/* 注意: 本代码需要在 Android 设备上用 NDK 编译并链接 libgui */
-
-/* Typedef the ScreenshotClient we'll dynamically load */
-typedef void* (*ScreenshotClient_create_t)();
-typedef void  (*ScreenshotClient_destroy_t)(void*);
-typedef int   (*ScreenshotClient_update_t)(void*, int* width, int* height, int* stride, int* format, int displayId);
-typedef void* (*ScreenshotClient_getPixels_t)(void*);
-
-static void *s_libgui = NULL;
-static void *s_client = NULL;
-
-static ScreenshotClient_create_t ScreenshotClient_create = NULL;
-static ScreenshotClient_destroy_t ScreenshotClient_destroy = NULL;
-static ScreenshotClient_update_t ScreenshotClient_update = NULL;
-static ScreenshotClient_getPixels_t ScreenshotClient_getPixels = NULL;
-
-static FrameBuffer s_fb = {0};
-
-int screencap_init(void) {
-    LOGI("Initializing ScreenshotClient via libgui");
-
-    s_libgui = dlopen("libgui.so", RTLD_NOW | RTLD_LOCAL);
-    if (!s_libgui) {
-        LOGE("Failed to load libgui.so: %s", dlerror());
-        goto fail;
+/* 将 raw 像素转换为紧密 RGBA8888；src 每行按 width*bpp 紧密排列。 */
+static void convert_to_rgba(const uint8_t *src, uint8_t *dst,
+                            int width, int height, uint32_t format, int bpp) {
+    int n = width * height;
+    for (int i = 0; i < n; i++) {
+        const uint8_t *p = src + (size_t)i * bpp;
+        uint8_t *q = dst + (size_t)i * RGBA_BPP;
+        switch (format) {
+            case HAL_PIXEL_FORMAT_RGBA_8888:
+                q[0] = p[0]; q[1] = p[1]; q[2] = p[2]; q[3] = p[3];
+                break;
+            case HAL_PIXEL_FORMAT_BGRA_8888:
+                q[0] = p[2]; q[1] = p[1]; q[2] = p[0]; q[3] = p[3];
+                break;
+            case HAL_PIXEL_FORMAT_RGBX_8888:
+                q[0] = p[0]; q[1] = p[1]; q[2] = p[2]; q[3] = 255;
+                break;
+            case HAL_PIXEL_FORMAT_RGB_888:
+                q[0] = p[0]; q[1] = p[1]; q[2] = p[2]; q[3] = 255;
+                break;
+            case HAL_PIXEL_FORMAT_RGB_565: {
+                /* 小端 uint16: [rrrrrggg][gggbbbbb] */
+                uint16_t v = (uint16_t)((p[1] << 8) | p[0]);
+                q[0] = (uint8_t)(((v >> 11) & 0x1F) * 255 / 31);
+                q[1] = (uint8_t)(((v >> 5) & 0x3F) * 255 / 63);
+                q[2] = (uint8_t)((v & 0x1F) * 255 / 31);
+                q[3] = 255;
+                break;
+            }
+            default:
+                break;
+        }
     }
-
-    /* 解析 ScreenshotClient 函数指针 */
-    ScreenshotClient_create = (ScreenshotClient_create_t)dlsym(s_libgui, "_ZN16ScreenshotClientC1Ev");
-    ScreenshotClient_destroy = (ScreenshotClient_destroy_t)dlsym(s_libgui, "_ZN16ScreenshotClientD1Ev");
-    ScreenshotClient_update = (ScreenshotClient_update_t)dlsym(s_libgui, "_ZN16ScreenshotClient6updateEv");
-
-    if (!ScreenshotClient_create || !ScreenshotClient_destroy || !ScreenshotClient_update) {
-        LOGE("Failed to resolve ScreenshotClient symbols: %s", dlerror());
-        goto fail;
-    }
-
-    s_client = ScreenshotClient_create();
-    if (!s_client) {
-        LOGE("Failed to create ScreenshotClient instance");
-        goto fail;
-    }
-
-    LOGI("ScreenshotClient initialized successfully");
-    return 0;
-
-fail:
-    if (s_libgui) { dlclose(s_libgui); s_libgui = NULL; }
-    return -1;
 }
 
 const FrameBuffer *screencap_capture(void) {
-    if (!s_client) {
-        LOGE("ScreenshotClient not initialized");
+    FILE *pipe = popen(SCREENCAP_BIN, "rb");
+    if (!pipe) {
+        LOGE("popen screencap failed");
         return NULL;
     }
 
-    int status = ScreenshotClient_update(s_client, &s_fb.width, &s_fb.height,
-                                          &s_fb.stride, NULL, 0);
-    if (status != 0) {
-        LOGE("ScreenshotClient update failed: %d", status);
+    uint32_t header[HEADER_WORDS];
+    if (fread(header, sizeof(uint32_t), HEADER_WORDS, pipe) != HEADER_WORDS) {
+        LOGE("failed to read screencap header");
+        pclose(pipe);
         return NULL;
     }
 
-    s_fb.pixels = (uint8_t*)ScreenshotClient_getPixels(s_client);
-    if (!s_fb.pixels) {
-        LOGE("ScreenshotClient getPixels returned NULL");
+    int width = (int)header[0];
+    int height = (int)header[1];
+    uint32_t format = header[2];
+
+    int bpp = format_bpp(format);
+    if (bpp < 0) {
+        LOGE("unsupported pixel format: %u", format);
+        pclose(pipe);
         return NULL;
     }
+    if (width <= 0 || height <= 0) {
+        LOGE("invalid dimensions: %dx%d", width, height);
+        pclose(pipe);
+        return NULL;
+    }
+
+    size_t raw_size = (size_t)width * (size_t)height * (size_t)bpp;
+    if (raw_size > s_raw_size) {
+        uint8_t *nb = (uint8_t *)realloc(s_raw, raw_size);
+        if (!nb) {
+            LOGE("realloc raw buffer failed (%zu bytes)", raw_size);
+            pclose(pipe);
+            return NULL;
+        }
+        s_raw = nb;
+        s_raw_size = raw_size;
+    }
+
+    size_t got = fread(s_raw, 1, raw_size, pipe);
+    pclose(pipe);
+    if (got != raw_size) {
+        LOGE("incomplete pixel data: %zu/%zu", got, raw_size);
+        return NULL;
+    }
+
+    size_t rgba_size = (size_t)width * (size_t)height * RGBA_BPP;
+    if (rgba_size > s_rgba_size) {
+        uint8_t *nb = (uint8_t *)realloc(s_rgba, rgba_size);
+        if (!nb) {
+            LOGE("realloc rgba buffer failed (%zu bytes)", rgba_size);
+            return NULL;
+        }
+        s_rgba = nb;
+        s_rgba_size = rgba_size;
+    }
+
+    convert_to_rgba(s_raw, s_rgba, width, height, format, bpp);
+
+    s_fb.pixels = s_rgba;
+    s_fb.width = width;
+    s_fb.height = height;
+    s_fb.stride = width * RGBA_BPP;
 
     return &s_fb;
 }
 
 void screencap_release(void) {
-    if (s_client && ScreenshotClient_destroy) {
-        ScreenshotClient_destroy(s_client);
-        s_client = NULL;
-    }
-    if (s_libgui) {
-        dlclose(s_libgui);
-        s_libgui = NULL;
-    }
+    free(s_raw);
+    s_raw = NULL;
+    s_raw_size = 0;
+    free(s_rgba);
+    s_rgba = NULL;
+    s_rgba_size = 0;
     s_fb.pixels = NULL;
-    LOGI("ScreenshotClient released");
+    LOGI("screencap released");
 }
-
-#endif /* USE_SCREENCAP_FALLBACK */

@@ -10,55 +10,36 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.screen.vision.aim.AimController
+import com.screen.vision.api.ResultBus
 import com.screen.vision.detection.PostProcessor
 import com.screen.vision.detection.Preprocessor
 import com.screen.vision.detection.YOLODetector
-import com.screen.vision.model.DetectResult
 import com.screen.vision.socket.UnixSocketClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 
 class DetectionService : Service() {
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var isRunning = false
-    private var modelReady = false
+    private var modelLoaded = false
 
     private lateinit var socketClient: UnixSocketClient
     private lateinit var preprocessor: Preprocessor
     private lateinit var detector: YOLODetector
     private lateinit var postProcessor: PostProcessor
-
-    private val _results = MutableSharedFlow<List<DetectResult>>(replay = 1, extraBufferCapacity = 2)
-    val results: SharedFlow<List<DetectResult>> = _results
+    private var aimController: AimController? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
-        initComponents()
-    }
-
-    private fun initComponents() {
         socketClient = UnixSocketClient()
-        preprocessor = Preprocessor(inputSize = 960)
-    }
-
-    fun initWithClasses(classNames: List<String>, modelPath: String = "model.tflite") {
-        modelReady = try {
-            detector = YOLODetector(this, modelPath, classNames = classNames)
-            postProcessor = PostProcessor(classNames = classNames)
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Model load failed ($modelPath): ${e.message}")
-            false
-        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -68,20 +49,41 @@ class DetectionService : Service() {
         val classNames = intent?.getStringArrayExtra(EXTRA_CLASS_NAMES)?.toList()
             ?: DEFAULT_CLASS_NAMES.toList()
         val modelPath = intent?.getStringExtra(EXTRA_MODEL_PATH) ?: "model.tflite"
+        val autoAim = intent?.getBooleanExtra(EXTRA_AUTO_AIM, false) ?: false
 
-        initWithClasses(classNames, modelPath)
+        if (!initModel(classNames, modelPath)) {
+            Log.e(TAG, "Model init failed; aborting start")
+            isRunning = false
+            ResultBus.publish(emptyList())
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        if (autoAim) {
+            aimController = AimController(scope).also { it.start() }
+        }
+
         scope.launch { runDetectionLoop() }
         return START_NOT_STICKY
     }
 
-    private suspend fun runDetectionLoop() {
-        if (!modelReady) {
-            Log.e(TAG, "Model not ready; detection loop not started")
-            return
+    private fun initModel(classNames: List<String>, modelPath: String): Boolean {
+        return try {
+            detector = YOLODetector(this, modelPath)
+            preprocessor = Preprocessor(inputSize = detector.inputSize)
+            postProcessor = PostProcessor(classNames = classNames)
+            modelLoaded = true
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Model load failed ($modelPath): ${e.message}")
+            false
         }
+    }
+
+    private suspend fun runDetectionLoop() {
         if (!socketClient.connect()) {
             Log.e(TAG, "Failed to connect to native daemon")
-            _results.emit(emptyList())
+            cleanup()
             return
         }
         Log.i(TAG, "Connected, starting detection loop")
@@ -100,7 +102,8 @@ class DetectionService : Service() {
             val rawOutput = detector.detect(preprocessed.inputBuffer)
             val detections = postProcessor.process(rawOutput, preprocessed)
 
-            if (detections.isNotEmpty()) _results.tryEmit(detections)
+            ResultBus.publish(detections)
+            aimController?.onFrame(detections, preprocessed.originalWidth, preprocessed.originalHeight)
 
             frameCount++
             totalTimeUs += (System.nanoTime() - frameStart) / 1000
@@ -118,10 +121,14 @@ class DetectionService : Service() {
     }
 
     private fun cleanup() {
+        aimController?.stop()
+        aimController = null
+        ResultBus.publish(emptyList())
         isRunning = false
         try { socketClient.disconnect() } catch (_: Exception) { }
-        if (modelReady) {
+        if (modelLoaded) {
             try { detector.close() } catch (_: Exception) { }
+            modelLoaded = false
         }
     }
 
@@ -159,6 +166,7 @@ class DetectionService : Service() {
         private const val NOTIFICATION_ID = 1001
         const val EXTRA_CLASS_NAMES = "class_names"
         const val EXTRA_MODEL_PATH = "model_path"
+        const val EXTRA_AUTO_AIM = "auto_aim"
 
         val DEFAULT_CLASS_NAMES = arrayOf("enemy")
     }

@@ -28,7 +28,6 @@ import kotlinx.coroutines.flow.*
 object ScreenVisionSDK {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val _results = MutableSharedFlow<List<DetectResult>>(replay = 1, extraBufferCapacity = 4)
 
     @Volatile
     private var isStarted = false
@@ -41,8 +40,9 @@ object ScreenVisionSDK {
      * @param context   Application context
      * @param classNames 类别名称列表，顺序必须与训练时的 dataset.yaml 一致
      * @param modelPath  TFLite 模型路径 (assets/ 或已下载的路径)
+     * @param autoAim    是否启用自动瞄准
      */
-    fun start(context: Context, classNames: List<String>, modelPath: String = "model.tflite") {
+    fun start(context: Context, classNames: List<String>, modelPath: String = "model.tflite", autoAim: Boolean = false) {
         if (isStarted) return
         isStarted = true
         _classNames = classNames
@@ -57,6 +57,7 @@ object ScreenVisionSDK {
         serviceIntent = Intent(context, DetectionService::class.java).apply {
             putExtra(DetectionService.EXTRA_CLASS_NAMES, classNames.toTypedArray())
             putExtra(DetectionService.EXTRA_MODEL_PATH, modelPath)
+            putExtra(DetectionService.EXTRA_AUTO_AIM, autoAim)
         }
         context.startForegroundService(serviceIntent!!)
 
@@ -87,11 +88,7 @@ object ScreenVisionSDK {
         }
     }
 
-    fun setResultSource(flow: SharedFlow<List<DetectResult>>) {
-        scope.launch { flow.collect { _results.emit(it) } }
-    }
-
-    fun observe(): SharedFlow<List<DetectResult>> = _results
+    fun observe(): SharedFlow<List<DetectResult>> = ResultBus.results
 
     fun tap(x: Int, y: Int): Boolean {
         return try {

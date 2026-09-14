@@ -21,15 +21,15 @@
 
 ## 已知问题与优先级
 
-以下优先级是本项目的交付顺序：**P0 为阻断最小闭环，P1 为可靠性与评估必要条件，P2 为基线稳定后的交付能力。** B01/B02/B06 已在 M1 修复并通过构建验证；其余代码问题仍待修复。
+以下优先级是本项目的交付顺序：**P0 为阻断最小闭环，P1 为可靠性与评估必要条件，P2 为基线稳定后的交付能力。** B01/B02/B06 已在 M1 修复并通过构建验证；B03/B04/B05 本轮完成代码修复并通过构建，待真机核验；其余代码问题仍待修复。
 
 | 编号 | 优先级 | 代码证据与影响 | 对应动作 / 验收 |
 |---|---|---|---|
 | B01 | P0 | [DetectionService](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt) 使用 `#` 注释、`onBind()` 返回 Flow、普通 suspend 方法中无接收者地使用 `isActive`；[SDK](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt) 的独立 object 内嵌 companion object | ✅ M1 已修：`#`→`//`、`onBind()` 返回 `Binder()`、显式 `import kotlinx.coroutines.isActive`、object 内 companion 移除；`assembleDebug` 通过 |
 | B02 | P0 | [socket_server.c](native-daemon/socket_server.c) 缺 `chmod` 声明头文件；[main.c](native-daemon/main.c) `%d` 接收 long long；CMake/Android.mk 缺 `dl`；[build.sh](native-daemon/build.sh) 生成带连字符的 Android raw 资源名 | ✅ M1 已修：`sys/stat.h`、FPS 统计改 `long long`+`%lld`、`-ldl`/`dl`、raw 资源名 `screen_visiond`；NDK r26d arm64 交叉编译通过（32K）；拆开纯构建与显式部署仍待办 |
-| B03 | P0 | [screencap.c](native-daemon/screencap.c) 默认路径的 `getPixels` 指针从未绑定，C++ 符号/调用方式不正确；fallback 执行 `screencap -p` 却把 PNG 当 raw | 先建立正确的低速截图基线；检查实际 raw/PNG 格式、像素顺序、stride、尺寸及分配；不能只删除 `-p` 或硬猜 raw 头 |
-| B04 | P0 | [export_tflite.py](training/export_tflite.py) `nms=True`；[YOLODetector](android-app/app/src/main/java/com/screen/vision/detection/YOLODetector.kt) 按 `5+nc` 猜类别并用二维数组接三维输出；[PostProcessor](android-app/app/src/main/java/com/screen/vision/detection/PostProcessor.kt) 按交错 raw/objectness 解析 | 固定并检查真实模型契约，匹配输出形状、坐标单位及 NMS；同图跨引擎结果对齐，不能只验证“不崩溃” |
-| B05 | P0 | [SDK](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt) 的 `setResultSource()` 没有调用者，绑定回调只记日志；Service 仅发非空结果 | 接通合法 Binder 与 Flow；验证“有目标→无目标→断流→停止→重启”，不保留旧目标 |
+| B03 | P0 | [screencap.c](native-daemon/screencap.c) 默认路径的 `getPixels` 指针从未绑定，C++ 符号/调用方式不正确；fallback 执行 `screencap -p` 却把 PNG 当 raw | ✅ 代码已修（待真机）：改用 `popen("/system/bin/screencap")` 读 raw 流，解析 12 字节头（width/height/format）→ 按 HAL format 定 bpp → 转紧密 RGBA8888 复用缓冲；NDK arm64 编译通过。raw 头/像素顺序/stride/尺寸真机行为仍未核实；ScreenshotClient 快路径未实现 |
+| B04 | P0 | [export_tflite.py](training/export_tflite.py) `nms=True`；[YOLODetector](android-app/app/src/main/java/com/screen/vision/detection/YOLODetector.kt) 按 `5+nc` 猜类别并用二维数组接三维输出；[PostProcessor](android-app/app/src/main/java/com/screen/vision/detection/PostProcessor.kt) 按交错 raw/objectness 解析 | ✅ 代码已修（待真机）：YOLODetector 校验 `[1,S,S,3]`/`[1,N,6]` 并直接用 ByteBuffer；PostProcessor 按 C02 解析归一化 xyxy_score_class；真实模型 tensor/坐标单位/NMS 仍须以实际导出产物核验，同图跨引擎对齐未做 |
+| B05 | P0 | [SDK](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt) 的 `setResultSource()` 没有调用者，绑定回调只记日志；Service 仅发非空结果 | ✅ 代码已修（待真机）：新增进程级 `ResultBus`，Service 每帧发布（含空列表），`SDK.observe()` 返回同一实例，移除无调用者的 `setResultSource`；“有目标→无目标→断流→停止→重启”全周期待真机验证 |
 | B06 | P0 | [Manifest](android-app/app/src/main/AndroidManifest.xml) 未声明必要的前台服务权限，声明 mediaProjection 却没有对应授权流程；无 Activity；[YOLODetector](android-app/app/src/main/java/com/screen/vision/detection/YOLODetector.kt) 在主线程创建 GPU、其他线程推理/关闭 | ✅ M1 已修（构建/启动部分）：声明 `FOREGROUND_SERVICE` + `SPECIAL_USE`、移除 mediaProjection、新增 `MainActivity`；GPU delegate 移除改 XNNPACK CPU，GPU 同线程生命周期留待 M3 重加时落实 |
 | B07 | P1 | [train.py](training/train.py) 依赖未经确认的 `yolov8s-p2.pt`，只检查 YAML；[visualize.py](training/visualize.py) 标签路径多出一层 `images`；[export_tflite.py](training/export_tflite.py) 忽略返回路径，仅扫描权重同级 | 明确 P2 YAML/迁移权重来源、数据预检、正确配对与导出定位；少量样例跑通后再正式训练 |
 | B08 | P1 | [帧发送端](native-daemon/socket_server.c) 忽略 stride，无短写重试与 SIGPIPE 防护；[接收端](android-app/app/src/main/java/com/screen/vision/socket/UnixSocketClient.kt) 漏 width 上限/height 下限，Int 乘法可能溢出 | 固定 LE、紧密 RGBA、安全尺寸计算；覆盖分段读写、半帧断流、慢客户端和对端关闭 |
@@ -44,7 +44,7 @@
 
 | 编号 | 代码证据 | 与合同/规格的偏差 | 归属任务 |
 |---|---|---|---|
-| N1 | [Preprocessor.kt](android-app/app/src/main/java/com/screen/vision/detection/Preprocessor.kt) `:29-33` 计算单一 `scale`，`:57-59` 将其同时存入 `scaleX=scaleY` | 违反 C03 `scaleX=newW/W`、`scaleY=newH/H` 逐轴实际比例，且缺 `max(1,floor)` 窄图保护。K70 3200×1440 两端恰好 0.3 才未暴露，奇数/非等比分辨率下中心回映会偏 | T09（关联 B04/B11） |
+| N1 | ~~[Preprocessor.kt](android-app/app/src/main/java/com/screen/vision/detection/Preprocessor.kt) `:29-33` 计算单一 `scale`，`:57-59` 将其同时存入 `scaleX=scaleY`~~ | ~~违反 C03 `scaleX=newW/W`、`scaleY=newH/H` 逐轴实际比例，且缺 `max(1,floor)` 窄图保护~~ | ✅ 已修：逐轴 `scaleX=newW/W`、`scaleY=newH/H` + `max(1,floor)`，随本轮构建通过 |
 | N2 | ~~[DetectionService.kt](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt) `:61`、`:71` 返回 `START_STICKY`~~ | ~~与 ANDROID §4 要求的 `START_NOT_STICKY` 相反~~ | ✅ 已修：两处均改 `START_NOT_STICKY`，随 M1 构建通过 |
 | N3 | [main.c](native-daemon/main.c) `:46,58,94,104,129` 计时用 `CLOCK_MONOTONIC` | 与 C05/NATIVE §4 要求的 `CLOCK_BOOTTIME` 不符，禁止与 Android 跨进程相减 | T14（关联 B11） |
 | N4 | [requirements.txt](training/requirements.txt) 同时含 torch/ultralytics/tensorflow | 与 TRAINING §5「训练与导出环境分离」矛盾，训练环境不应含 TensorFlow | T01/T05/T06（关联 B10） |
@@ -132,3 +132,19 @@
 本轮新增源码：`contracts/fixtures/`（生成器+bin+manifest+README）、`native-daemon/frame_protocol.{c,h}`、`native-daemon/tests/test_frame_protocol.c`；M1 另增 `android-app/gradlew` + `gradle/wrapper/`、`MainActivity.kt`、`res/raw/screen_visiond`（arm64 二进制）。已产出 `native-daemon/build/screen-visiond` 与 `android-app/app/build/outputs/apk/debug/app-debug.apk`；未生成训练权重、模型或真机记录；ASan 因本机缺 `libclang_rt.asan` 运行库未跑（UBSan 已跑）。
 
 下一批可继续 T03（以候选数据为输入落实数据语义、清单与复核流程）及 T08 的 Kotlin 端 `FrameHeader.kt` 编译验证；`socket_server.c` 接入 v2 属 T14。M1 构建已闭环，真机安装/启动与缺模型/未 root 反馈待设备验证。训练/导出 CPU 环境已就绪，但候选数据尚不符合单类 `enemy` 契约，不能声称训练或导出成功。
+
+## 自动瞄准与结果通路实现轮（2026-09-14）
+
+按用户指示（root/真机由用户自行验证，本阶段假设环境就绪、以代码实现为主）补齐检测链路与自动瞄准功能，并修复 B03/B04/B05 与 N1。本轮均只到「代码实现 + 本地构建通过」，未做真机、真实模型与真实截图验证。
+
+| 改动 | 内容 | 验证状态 |
+|---|---|---|
+| `screencap.c`（B03） | `popen("/system/bin/screencap")` 读 raw 流：解析 12 字节头（width/height/format）→ 按 HAL format 定 bpp → 统一转紧密 RGBA8888 复用缓冲 | NDK arm64 交叉编译通过（`-Wall -Wextra -Werror`）；raw 头/像素顺序/stride 真机行为未核实 |
+| `YOLODetector.kt`（B04） | 加载时校验输入 `[1,S,S,3]` 与输出 `[1,N,6]`，不再用 `shape[1]-5` 猜类；推理用容量/dtype 匹配的直接 ByteBuffer，返回扁平 FloatArray | assembleDebug 通过；真实模型 tensor 未核验 |
+| `PostProcessor.kt`（B04） | 按 C02 解析 `x1,y1,x2,y2,score,classId` 归一化输出，score≤0 视为 padding、非有限/非法 class 判坏帧、中心落 padding 丢弃，回映原图中心并 floor+夹取 | assembleDebug 通过 |
+| `Preprocessor.kt`（N1） | 按 C03 逐轴 `scaleX=newW/W`、`scaleY=newH/H`，`newW/newH=max(1,floor)`，Preprocessed 增带 newW/newH/inputSize | assembleDebug 通过 |
+| `ResultBus.kt`（B05，新增） | 进程级 `MutableSharedFlow<List<DetectResult>>`，Service 每帧发布（含空列表），`SDK.observe()` 返回同一实例，移除无调用者的 `setResultSource` | assembleDebug 通过 |
+| `aim/`（新增 AimConfig/TouchInjector/AimController） | 自动瞄准：选中心最近目标 → 比例增益 + 死区 + 单步上限 → `su -c input swipe` 注入拖拽；独立节拍协程与检测循环解耦 | assembleDebug 通过；注入方向/灵敏度需真机按控制方案调参 |
+| `DetectionService`/`SDK`/`MainActivity` | Service 用 `detector.inputSize` 驱动预处理、发布 ResultBus、驱动 AimController；`SDK.start(autoAim=...)`、`observe()=ResultBus.results`；MainActivity 增自动瞄准按钮 | assembleDebug 通过 |
+
+本轮构建：`build.sh`（NDK r26d arm64）产出 `screen-visiond`（36K）；`gradle -p android-app :app:assembleDebug` 通过。剩余未验证项：真实截图 raw 格式、真实模型输出张量、root 触控注入方向与延迟；`input swipe` 每步新建 su 进程、sendevent/持久 su 低延迟注入属后续优化。

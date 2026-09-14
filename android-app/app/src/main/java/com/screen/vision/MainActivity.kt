@@ -43,9 +43,15 @@ class MainActivity : Activity() {
 
         val startBtn = Button(this).apply {
             text = "Start detection"
-            setOnClickListener { onStartClicked() }
+            setOnClickListener { onStartClicked(autoAim = false) }
         }
         root.addView(startBtn)
+
+        val aimBtn = Button(this).apply {
+            text = "Start auto-aim"
+            setOnClickListener { onStartClicked(autoAim = true) }
+        }
+        root.addView(aimBtn)
 
         val stopBtn = Button(this).apply {
             text = "Stop"
@@ -56,12 +62,12 @@ class MainActivity : Activity() {
         return root
     }
 
-    private fun onStartClicked() {
+    private fun onStartClicked(autoAim: Boolean) {
         if (!hasModel()) {
             statusText.text = "Missing model: place model.tflite in assets/ and rebuild"
             return
         }
-        ScreenVisionSDK.start(this, listOf("enemy"))
+        ScreenVisionSDK.start(this, listOf("enemy"), autoAim = autoAim)
         refreshStatus()
     }
 

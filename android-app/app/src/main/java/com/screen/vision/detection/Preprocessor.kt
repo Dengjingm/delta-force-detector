@@ -4,10 +4,13 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.floor
 
 /**
- * YOLO 输入预处理：
- * Bitmap → 模型输入尺寸缩放 → normalized float32 ByteBuffer (RGB)
+ * YOLO 输入预处理 (CONTRACTS C03):
+ *   r = min(S/W, S/H); newW=max(1,floor(W*r)); newH=max(1,floor(H*r))
+ *   居中 LetterBox，填充 114，逐轴记录实际比例 scaleX/scaleY
+ *   RGB float32 NHWC，每通道 /255
  */
 class Preprocessor(
     private val inputSize: Int = 640,
@@ -17,8 +20,11 @@ class Preprocessor(
         val inputBuffer: ByteBuffer,
         val scaleX: Float,
         val scaleY: Float,
-        val padX: Int,
-        val padY: Int,
+        val padX: Int,        // left
+        val padY: Int,        // top
+        val newW: Int,        // 缩放到画布中的有效宽
+        val newH: Int,        // 缩放到画布中的有效高
+        val inputSize: Int,   // S
         val originalWidth: Int,
         val originalHeight: Int,
     )
@@ -26,11 +32,13 @@ class Preprocessor(
     fun preprocess(bitmap: Bitmap): Preprocessed {
         val origW = bitmap.width
         val origH = bitmap.height
-        val scale = minOf(inputSize.toFloat() / origW, inputSize.toFloat() / origH)
-        val newW = (origW * scale).toInt()
-        val newH = (origH * scale).toInt()
-        val padX = (inputSize - newW) / 2
-        val padY = (inputSize - newH) / 2
+        val r = minOf(inputSize.toFloat() / origW, inputSize.toFloat() / origH)
+        val newW = maxOf(1, floor(origW * r).toInt())
+        val newH = maxOf(1, floor(origH * r).toInt())
+        val padX = floor((inputSize - newW) / 2.0).toInt()
+        val padY = floor((inputSize - newH) / 2.0).toInt()
+        val scaleX = newW.toFloat() / origW
+        val scaleY = newH.toFloat() / origH
 
         val scaled = Bitmap.createScaledBitmap(bitmap, newW, newH, true)
         val canvas = Bitmap.createBitmap(inputSize, inputSize, Bitmap.Config.ARGB_8888)
@@ -43,9 +51,8 @@ class Preprocessor(
         canvas.getPixels(pixels, 0, inputSize, 0, 0, inputSize, inputSize)
         canvas.recycle()
 
-        val inputBuffer = ByteBuffer.allocateDirect(1 * inputSize * inputSize * 3 * 4)
+        val inputBuffer = ByteBuffer.allocateDirect(inputSize * inputSize * 3 * 4)
         inputBuffer.order(ByteOrder.nativeOrder())
-        inputBuffer.rewind()
         for (pixel in pixels) {
             inputBuffer.putFloat(((pixel shr 16) and 0xFF) / 255.0f)
             inputBuffer.putFloat(((pixel shr 8) and 0xFF) / 255.0f)
@@ -55,9 +62,15 @@ class Preprocessor(
 
         return Preprocessed(
             inputBuffer = inputBuffer,
-            scaleX = scale, scaleY = scale,
-            padX = padX, padY = padY,
-            originalWidth = origW, originalHeight = origH,
+            scaleX = scaleX,
+            scaleY = scaleY,
+            padX = padX,
+            padY = padY,
+            newW = newW,
+            newH = newH,
+            inputSize = inputSize,
+            originalWidth = origW,
+            originalHeight = origH,
         )
     }
 }

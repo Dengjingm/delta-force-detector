@@ -15,10 +15,10 @@ def train():
     # ── 配置区 ──────────────────────────────────────────
     project_root = Path(__file__).parent
     data_yaml = str(project_root / "data" / "dataset.yaml")
-    model_name = "yolov8s-p2.pt"  # small + P2 小目标检测头
-    epochs = 150                    # 单类小目标需更多迭代收敛
+    model_name = str(project_root / "yolov8s.pt")  # MVP: 标准权重(P2 变体不可得,后续对齐)
+    epochs = 50                     # MVP: 先跑通;正式训练再增加
     batch_size = 16
-    imgsz = 960                     # 更高分辨率，远距敌人更多像素
+    imgsz = 640                     # MVP: 标准 yolov8s 输入;P2/960 后续对齐
 
     # Apple Silicon 用 MPS，否则 CPU
     device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -41,7 +41,7 @@ def train():
         batch=batch_size,
         imgsz=imgsz,
         device=device,
-        workers=2,
+        workers=8,
         amp=True,
         project=str(project_root / "runs"),
         name="hok_detector",
