@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": 2,
+  "generatedBy": "generate_fixtures.py",
+  "fixtures": [
+    {
+      "name": "frame_v2_rg_2x1",
+      "file": "frame_v2_rg_2x1.bin",
+      "kind": "golden_normal",
+      "sizeBytes": 72,
+      "sha256": "1e1a57f8f7dc9060bcdf2f114ad61c6ff7a4625bcde66ecc27517320217e73fe",
+      "hex": "53564632020040000800000002000000010000000800000001000000000000000100000000000000e803000000000000d0070000000000000100000000000000ff0000ff00ff00ff",
+      "description": "v2 golden frame: 2x1 RGBA8888, stride 8, rotation 0, frameId 1, captureStartNs 1000, captureEndNs 2000, streamId 1. Payload is red (255,0,0,255) then green (0,255,0,255).",
+      "header": {
+        "magic": "SVF2",
+        "version": 2,
+        "headerBytes": 64,
+        "payloadBytes": 8,
+        "width": 2,
+        "height": 1,
+        "rowStrideBytes": 8,
+        "pixelFormat": 1,
+        "rotationDegrees": 0,
+        "frameId": 1,
+        "captureStartNs": 1000,
+        "captureEndNs": 2000,
+        "streamId": 1
+      },
+      "payload": {
+        "pixelOrder": "RGBA8888",
+        "pixels": [
+          {
+            "x": 0,
+            "y": 0,
+            "rgba": [
+              255,
+              0,
+              0,
+              255
+            ]
+          },
+          {
+            "x": 1,
+            "y": 0,
+            "rgba": [
+              0,
+              255,
+              0,
+              255
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

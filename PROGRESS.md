@@ -1,6 +1,6 @@
 # 建设评估与后续计划
 
-更新日期：2026-09-14。审查基线：`ab93f11`；本轮只更新文档，没有修复或新增代码实现。完整开发方案已交付，入口为 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)；实施顺序见 [TASKS.md](docs/plan/TASKS.md)，合同与验收分别见 [CONTRACTS](docs/plan/CONTRACTS.md) / [VALIDATION](docs/plan/VALIDATION.md)。
+更新日期：2026-09-14。审查基线：`ab93f11`；本轮在文档之外开始落地源码：完成 T07（v2 帧协议黄金 fixture）与 T08 的 C 端编解码（`frame_protocol.c/.h` + host 测试），尚未接入 socket 传输或 Android 端。完整开发方案入口为 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)；实施顺序见 [TASKS.md](docs/plan/TASKS.md)，合同与验收分别见 [CONTRACTS](docs/plan/CONTRACTS.md) / [VALIDATION](docs/plan/VALIDATION.md)。
 
 **结论：模块划分可以保留，但当前仍是未连通的原型脚手架。后续应从“先采集并完整训练，再编译联调”调整为“先建立构建与模型契约基线，数据建设并行；离线验证通过后接入 root 截图，再验收精度和持续性能”。**
 
@@ -37,6 +37,19 @@
 | B10 | P1 | [requirements.txt](training/requirements.txt) 仅版本下限；数据划分/测试集缺失；训练目录残留 `hok_detector`；设备只选 MPS/CPU | 记录验证环境、模型/数据版本、实验配置和 seed；按对局划分；统一命名；按需增加 CUDA 配置 |
 | B11 | P1 | 960 固定预处理、每帧多次大分配、30fps 采集与 15fps 消费；协议无采集时间戳；[main.c](native-daemon/main.c) FPS 统计不计等待且有整数乘法溢出风险 | 先测阶段耗时和端到端帧龄；规划时间戳/帧编号和最新帧策略，双端同步升级；基于证据再优化缓存和模型 |
 | B12 | P2 | [ModelUpdater](android-app/app/src/main/java/com/screen/vision/update/ModelUpdater.kt) 使用占位 URL、未校验 md5；SDK 不选缓存；detector 仅支持 assets | 基线阶段不依赖远端更新；后续实现兼容性校验、版本选择、原子切换和回滚再验收 |
+
+### 待补录问题（本轮源码复核新增，尚未并入上方 B 编号）
+
+以下为逐行核对源码后新增的、未被 B01–B12 显式覆盖的「现状与合同不一致」证据。待对应任务实现时转正编号并并入任务追踪，当前仅作偏差留存。
+
+| 编号 | 代码证据 | 与合同/规格的偏差 | 归属任务 |
+|---|---|---|---|
+| N1 | [Preprocessor.kt](android-app/app/src/main/java/com/screen/vision/detection/Preprocessor.kt) `:29-33` 计算单一 `scale`，`:57-59` 将其同时存入 `scaleX=scaleY` | 违反 C03 `scaleX=newW/W`、`scaleY=newH/H` 逐轴实际比例，且缺 `max(1,floor)` 窄图保护。K70 3200×1440 两端恰好 0.3 才未暴露，奇数/非等比分辨率下中心回映会偏 | T09（关联 B04/B11） |
+| N2 | [DetectionService.kt](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt) `:61`、`:71` 返回 `START_STICKY` | 与 ANDROID §4 要求的 `START_NOT_STICKY` 相反，进程退出后会错误重启 root 采集 | T02/A06（关联 B06） |
+| N3 | [main.c](native-daemon/main.c) `:46,58,94,104,129` 计时用 `CLOCK_MONOTONIC` | 与 C05/NATIVE §4 要求的 `CLOCK_BOOTTIME` 不符，禁止与 Android 跨进程相减 | T14（关联 B11） |
+| N4 | [requirements.txt](training/requirements.txt) 同时含 torch/ultralytics/tensorflow | 与 TRAINING §5「训练与导出环境分离」矛盾，训练环境不应含 TensorFlow | T01/T05/T06（关联 B10） |
+| N5 | [.gitignore](.gitignore) 忽略 `images/val`/`labels/val`，漏 `test/incoming/review/manifests` | 未覆盖规划数据布局 | T03/T04（关联 B10） |
+| N6 | [dataset.yaml](training/data/dataset.yaml) 仅有 `train`/`val` | 缺 `test` 划分，与 TRAINING §2 的 70/15/15 不符 | T03（关联 B10） |
 
 版本相关证据：Ultralytics 的 [v8.3.200 exporter](https://github.com/ultralytics/ultralytics/blob/v8.3.200/ultralytics/engine/exporter.py) 和 [detection head](https://github.com/ultralytics/ultralytics/blob/v8.3.200/ultralytics/nn/modules/head.py) 展示 raw `4+nc` 与 NMS 输出的区别，以及 TFLite 坐标处理；这是本次核对的具体版本，不代表本仓库已锁定此版本。P2 架构来源参见 [官方 P2 YAML](https://github.com/ultralytics/ultralytics/blob/v8.3.200/ultralytics/cfg/models/v8/yolov8-p2.yaml)。最终仍须检查实际导出产物。
 
@@ -99,7 +112,12 @@
 | `bash -n native-daemon/build.sh` | 通过 | Shell 语法正确，不代表 NDK 构建通过 |
 | macOS clang + 临时 Android log 声明、C11/严格警告 | 复现 `chmod` 未声明及 FPS printf 类型错误 | 证实 host 侧静态编译问题；不是 Android 交叉编译 |
 | 临时 socketpair 探针，调用当前帧发送函数后关闭接收端 | 发送进程被 SIGPIPE 终止 | 证实当前重连分支无法覆盖此断连情形 |
-| 本机工具与依赖探测 | 无可用 Gradle/Kotlin/CMake/adb/NDK、无 Java Runtime；无 torch/ultralytics/tensorflow | 未安装开发环境，未运行训练/导出、APK 构建或真机测试 |
+| 本机工具与依赖探测 | 有 gcc 12.3 / clang 17.0 / CMake 3.26 / make 4.4 / Python 3.11；已装 JDK 17.0.20.1、Gradle 8.7、Android SDK(platform-34/build-tools 34.0.0/platform-tools adb 37.0.1)、NDK r26d，位于 `/data/home/jingmindeng/android/`；训练 venv `/data/home/jingmindeng/android/venv-training` | C host 与 arm64 交叉编译均可；`gradle -p android-app projects` 配置通过，Android 构建工具链就绪；训练/导出 Python 依赖（CPU）已装并 import 验证通过 |
 | 文档路径、链接、状态与差异检查 | 11份Markdown的文件链接、标题锚点、JSON样例、代码围栏、26项任务依赖无环及 `git diff --check` 通过 | 变更仅限Markdown规划文档，CLAUDE符号链接保留；源码问题仍待修复 |
+| T07 黄金 fixture 生成 | `generate_fixtures.py` 逐字段 struct 打包与独立手写 hex 断言一致，产出 72 字节 `frame_v2_rg_2x1.bin`，SHA-256=`1e1a57f8…73fe`，写入 `manifest.json`/README | 帧协议 golden 基准已落地；长度/hash/字段期待值独立可复核 |
+| T08-C v2 编解码 host 测试 | `frame_protocol.c/.h` 以 gcc C11 `-Wall -Wextra -Werror` 编译，`test_frame_protocol.c` 全绿：golden 逐字节往返、错 magic/version/headerBytes、越界尺寸/stride/format/rotation/payload/时间顺序/零 ID 均正确拒绝，UBSan 无未定义行为 | C 端 v2 编解码与校验已 host 验证；`socket_server.c` 仍为 v1、Kotlin 端未实现，接入属 T14/T08-Kotlin |
+| Python 训练依赖（CPU） | venv `venv-training` 内 torch 2.14.0+cpu / torchvision 0.29.0+cpu / ultralytics 8.4.150 / tensorflow 2.21.0 / opencv-python-headless 4.11.0.86 / numpy 1.26.4 / pillow 12.3.0 / matplotlib 3.11.2 / pyyaml 6.0.3 / tqdm 4.70.1，全部 import 通过；labelimg 未装（仅 GUI）；torch 无 CUDA | CPU 训练/导出依赖就绪，尚未跑通训练或导出；numpy 锁 1.26.4 以兼容 TF，opencv 用 headless 版规避无头机缺 libGL |
 
-本轮没有生成数据、模型、APK 或 daemon 产物，没有连接/改动手机，也没有执行代码实现。下一次开发可直接从TASKS的T01/T03/T07三条独立任务开始；用户暂不需要为当前文档工作补充 root 或 Android 版本。
+本轮新增源码：`contracts/fixtures/`（生成器+bin+manifest+README）、`native-daemon/frame_protocol.{c,h}`、`native-daemon/tests/test_frame_protocol.c`。未生成数据、模型、APK 或 daemon 产物，未连接/改动手机；ASan 因本机缺 `libclang_rt.asan` 运行库未跑（UBSan 已跑）。
+
+下一批可继续独立任务：T01/T02（JDK17+Gradle+SDK+NDK 已就绪，可出 debug APK 与 arm64 交叉编译）与 T03（数据语义与清单，纯文档/脚本）。T08 的 Kotlin 端 `FrameHeader.kt` 现可编译验证；`socket_server.c` 接入 v2 属 T14。训练/导出依赖已装 CPU 版（venv-training），可开始 smoke run，但尚无训练数据/权重，不能声称训练或导出成功。用户暂无需补充 root 或 Android 版本。

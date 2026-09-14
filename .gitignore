@@ -9,6 +9,7 @@ training/data/labels/val/
 
 # Native daemon build
 native-daemon/build/
+native-daemon/build-host/
 native-daemon/libs/
 native-daemon/obj/
 

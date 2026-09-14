@@ -12,6 +12,7 @@
 | 模型导出与加载 | [export_tflite.py](training/export_tflite.py)、[YOLODetector.kt](android-app/app/src/main/java/com/screen/vision/detection/YOLODetector.kt) | Preprocessor、PostProcessor、模型资产和更新契约 |
 | 截图和帧格式 | [screencap.c](native-daemon/screencap.c)、[screencap.h](native-daemon/screencap.h) | Socket 两端、像素格式、stride、旋转 |
 | Socket 协议 | [socket_server.c](native-daemon/socket_server.c)、[UnixSocketClient.kt](android-app/app/src/main/java/com/screen/vision/socket/UnixSocketClient.kt) | main 循环、取消/重连、最大帧尺寸 |
+| v2 帧协议编解码 | [frame_protocol.c](native-daemon/frame_protocol.c)、[frame_protocol.h](native-daemon/frame_protocol.h)、[contracts/fixtures](contracts/fixtures/README.md) | 64 字节 LE 头、校验、黄金字节；尚未接入 socket_server |
 | 生命周期与结果订阅 | [ScreenVisionSDK.kt](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt)、[DetectionService.kt](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt) | Manifest、Binder、Flow、daemon 就绪与退出 |
 | 坐标与置信度 | [Preprocessor.kt](android-app/app/src/main/java/com/screen/vision/detection/Preprocessor.kt)、[PostProcessor.kt](android-app/app/src/main/java/com/screen/vision/detection/PostProcessor.kt) | 模型输出单位、DetectResult、原图尺寸 |
 | 模型更新 | [ModelUpdater.kt](android-app/app/src/main/java/com/screen/vision/update/ModelUpdater.kt) | SDK 选择路径、detector 加载方式、回滚 |
@@ -31,6 +32,8 @@
 ├── README.md                         项目入口与当前使用条件
 ├── PROGRESS.md                       建设评估、缺陷、里程碑与验证记录
 ├── .gitignore                        数据与构建产物忽略规则（尚不完整）
+├── contracts/
+│   └── fixtures/                     T07 黄金帧基准：README + 生成器 + .bin + manifest
 ├── training/
 │   ├── train.py                      训练入口 train()
 │   ├── export_tflite.py              导出入口 export_tflite()
@@ -40,7 +43,9 @@
 ├── native-daemon/
 │   ├── main.c                        进程入口、30fps 目标循环、信号与统计
 │   ├── screencap.c / screencap.h      截图后端与 FrameBuffer
-│   ├── socket_server.c / .h          单客户端 AF_UNIX 流式传输
+│   ├── socket_server.c / .h          单客户端 AF_UNIX 流式传输（仍 v1，未接 frame_protocol）
+│   ├── frame_protocol.c / .h         v2 64 字节 LE 编解码与校验（host 已测，未接入）
+│   ├── tests/test_frame_protocol.c   frame_protocol host 测试（gcc C11 严格警告 + UBSan）
 │   ├── CMakeLists.txt                C11、严格警告；Android/log 链接，缺 dl
 │   ├── Android.mk                    备选配置；未固定 ABI/API，缺 dl
 │   └── build.sh                      arm64/API28 构建、复制资源、发现设备自动推送
@@ -130,6 +135,8 @@
 | 缓冲区所有权 | `FrameBuffer.pixels` 由截图后端持有，发送方借用；不能擅自跨帧异步持有 |
 | 当前缺失 | magic/version、帧编号、采集时间戳、旋转、完整尺寸校验、短写重试和超时 |
 
+`frame_protocol.c/.h` 已实现 C01 的 64 字节 v2 编解码与校验（T07/T08-C，host 严格警告 + UBSan 通过，黄金字节与 `contracts/fixtures/frame_v2_rg_2x1.bin` 逐字节一致），但 `socket_server.c` 尚未迁移，线上仍发送上表的 v1 帧头。接入 v2 属于 T14，须同时替换 Kotlin 读取端并拒绝旧协议。
+
 `FrameBuffer.stride` 已定义但发送端忽略。`writev` 只是聚集写入，不能据此称为零拷贝。源码注释中的 PING/PONG 没有实现。任何帧头/像素布局升级都必须同时修改 C 发送端与 Kotlin 读取端，并验证旧协议如何拒绝或迁移。
 
 ### 4.3 模型输入、输出与坐标
@@ -163,4 +170,4 @@
 
 新增/移动模块时更新文件树与“首先阅读”表；改接口时更新调用链和契约。地图描述当前代码，拟建接口维护在 [CONTRACTS.md](docs/plan/CONTRACTS.md) 和模块规格中，任务与验收分别维护在TASKS/VALIDATION；PROGRESS只记录实际进展。缺陷修复并验证后，再把这里的断点描述改为实际行为，避免文档提前宣布完成。
 
-规划已定稿但未实现的主要变化：64字节v2帧头与C04显示控制、带sidecar的NMS模型包、六态VisionSnapshot、双运行profile、校准配置导入、精确daemon所有权和原子模型更新。当前源码仍是上文列出的旧协议/断点；不得把目标规格直接改写为本图的现有行为。
+规划已定稿但未实现的主要变化：带sidecar的NMS模型包、六态VisionSnapshot、双运行profile、校准配置导入、精确daemon所有权和原子模型更新。64字节v2帧头的编解码/校验（C 端 `frame_protocol.c/.h` + 黄金 fixture）已按 T07/T08-C 落地并通过 host 测试，但尚未接入 `socket_server.c`/Kotlin 接收端，线上仍为旧 v1 协议；不得把目标规格直接改写为本图的现有行为。
