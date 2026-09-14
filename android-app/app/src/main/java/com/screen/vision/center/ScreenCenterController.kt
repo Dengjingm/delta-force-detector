@@ -1,95 +1,97 @@
 package com.screen.vision.center
 
-import android.util.Log
 import com.screen.vision.model.DetectResult
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 /**
- * 屏幕中心移动控制器。
+ * 屏幕中心移动控制器：粘滞锁定 + 每检测帧一次修正。
  *
- * 检测循环每帧调用 [onFrame] 更新目标（选屏幕中心最近者），
- * 独立节拍协程读取最新目标，按比例增益 + 死区 + 单步上限计算
- * 注入位移，使屏幕中心朝目标收敛。
+ * 无锁定时选离屏幕中心最近的目标并按下（acquire），此后每帧用中心距离
+ * 关联同一目标持续跟踪；连续 [ScreenCenterConfig.releaseAfterMisses] 帧未匹配
+ * 或停用时抬起（release）。每帧修正量经 死区 + 比例增益 + 单步上限 限幅后
+ * 以相对位移注入，使屏幕中心朝目标收敛。
+ *
+ * [config] 为 @Volatile, 每帧顶部原子读取一次供整帧使用, 支持运行中热更新。
  */
 class ScreenCenterController(
-    private val scope: CoroutineScope,
-    private val config: ScreenCenterConfig = ScreenCenterConfig(),
+    private val injector: AimInjector = TouchInjector(),
+    config: ScreenCenterConfig = ScreenCenterConfig(),
 ) {
 
-    private val injector = TouchInjector()
-
-    private data class MoveTarget(
-        val x: Int,
-        val y: Int,
-        val screenWidth: Int,
-        val screenHeight: Int,
-    )
+    private data class LockedTarget(val x: Int, val y: Int, val missCount: Int)
 
     @Volatile
-    private var target: MoveTarget? = null
+    var config: ScreenCenterConfig = config
+        private set
 
-    @Volatile
-    private var running = false
+    fun updateConfig(newConfig: ScreenCenterConfig) {
+        config = newConfig
+    }
 
-    /** 检测线程调用：更新最新目标（无目标传空列表）。 */
+    private var target: LockedTarget? = null
+
+    /** 检测线程每帧调用；无目标传空列表表示本帧未匹配。 */
     fun onFrame(detections: List<DetectResult>, width: Int, height: Int) {
-        val best = selectTarget(detections, width / 2, height / 2)
-        target = best?.let { MoveTarget(it.x, it.y, width, height) }
-    }
+        val cfg = config
+        if (!cfg.enabled || width <= 0 || height <= 0) {
+            release()
+            return
+        }
+        val cx = width / 2
+        val cy = height / 2
 
-    fun start() {
-        if (running) return
-        running = true
-        scope.launch { loop() }
-    }
+        val current = target
+        if (current == null) {
+            val acquired = nearestTo(detections, cx, cy) ?: return
+            injector.acquire(cx, cy)
+            target = LockedTarget(acquired.x, acquired.y, 0)
+            correct(acquired.x, acquired.y, cx, cy, cfg)
+            return
+        }
 
-    fun stop() {
-        running = false
-        target = null
-    }
-
-    private suspend fun loop() {
-        while (running) {
-            if (config.enabled) step()
-            delay(config.moveIntervalMs)
+        val matched = nearestTo(detections, current.x, current.y)
+        val thresholdSq = cfg.associateDistancePx.toLong() * cfg.associateDistancePx
+        if (matched != null && distSq(matched.x, matched.y, current.x, current.y) <= thresholdSq) {
+            target = LockedTarget(matched.x, matched.y, 0)
+            correct(matched.x, matched.y, cx, cy, cfg)
+        } else {
+            val misses = current.missCount + 1
+            if (misses >= cfg.releaseAfterMisses) release()
+            else target = current.copy(missCount = misses)
         }
     }
 
-    private fun step() {
-        val t = target ?: return
-        if (t.screenWidth <= 0 || t.screenHeight <= 0) return
+    fun stop() {
+        release()
+    }
 
-        val cx = t.screenWidth / 2
-        val cy = t.screenHeight / 2
-        var dx = t.x - cx
-        var dy = t.y - cy
-        if (config.invertX) dx = -dx
-        if (config.invertY) dy = -dy
+    private fun correct(tx: Int, ty: Int, cx: Int, cy: Int, cfg: ScreenCenterConfig) {
+        var dx = tx - cx
+        var dy = ty - cy
+        if (cfg.invertX) dx = -dx
+        if (cfg.invertY) dy = -dy
 
-        if (abs(dx) <= config.deadzonePx && abs(dy) <= config.deadzonePx) return
+        if (abs(dx) <= cfg.deadzonePx && abs(dy) <= cfg.deadzonePx) return
 
-        val mx = (dx * config.sensitivity).toInt().coerceIn(-config.maxStepPx, config.maxStepPx)
-        val my = (dy * config.sensitivity).toInt().coerceIn(-config.maxStepPx, config.maxStepPx)
+        val mx = (dx * cfg.sensitivity).toInt().coerceIn(-cfg.maxStepPx, cfg.maxStepPx)
+        val my = (dy * cfg.sensitivity).toInt().coerceIn(-cfg.maxStepPx, cfg.maxStepPx)
         if (mx == 0 && my == 0) return
 
-        Log.d(TAG, "center: target=(${t.x},${t.y}) center=($cx,$cy) move=($mx,$my)")
-        injector.swipe(cx, cy, cx + mx, cy + my, config.swipeDurationMs)
+        injector.moveBy(mx, my)
     }
 
-    private fun selectTarget(
-        detections: List<DetectResult>,
-        cx: Int,
-        cy: Int,
-    ): DetectResult? = detections.minByOrNull { d ->
-        val dx = (d.x - cx).toLong()
-        val dy = (d.y - cy).toLong()
-        dx * dx + dy * dy
+    private fun release() {
+        if (target == null) return
+        injector.release()
+        target = null
     }
 
-    companion object {
-        private const val TAG = "ScreenCenter"
+    private fun nearestTo(detections: List<DetectResult>, px: Int, py: Int): DetectResult? =
+        detections.minByOrNull { d -> distSq(d.x, d.y, px, py) }
+
+    private fun distSq(x1: Int, y1: Int, x2: Int, y2: Int): Long {
+        val dx = (x1 - x2).toLong()
+        val dy = (y1 - y2).toLong()
+        return dx * dx + dy * dy
     }
 }

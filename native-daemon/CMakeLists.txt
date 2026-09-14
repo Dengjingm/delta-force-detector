@@ -10,6 +10,10 @@ add_executable(screen-visiond
     main.c
     screencap.c
     socket_server.c
+    frame_protocol.c
+    control_protocol.c
+    control_server.c
+    input_inject.c
 )
 
 target_link_libraries(screen-visiond

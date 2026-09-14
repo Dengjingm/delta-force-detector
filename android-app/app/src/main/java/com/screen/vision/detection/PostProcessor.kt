@@ -69,11 +69,20 @@ class PostProcessor(
             val centerX = floor(cx).coerceIn(0f, (preproc.originalWidth - 1).toFloat()).toInt()
             val centerY = floor(cy).coerceIn(0f, (preproc.originalHeight - 1).toFloat()).toInt()
 
+            val ox1 = ((x1 - validLeft) / preproc.scaleX).coerceIn(0f, preproc.originalWidth.toFloat())
+            val oy1 = ((y1 - validTop) / preproc.scaleY).coerceIn(0f, preproc.originalHeight.toFloat())
+            val ox2 = ((x2 - validLeft) / preproc.scaleX).coerceIn(0f, preproc.originalWidth.toFloat())
+            val oy2 = ((y2 - validTop) / preproc.scaleY).coerceIn(0f, preproc.originalHeight.toFloat())
+
             results.add(DetectResult(
                 elementId = classNames.getOrElse(classId.toInt()) { "class_${classId.toInt()}" },
                 x = centerX,
                 y = centerY,
                 confidence = score,
+                x1 = ox1,
+                y1 = oy1,
+                x2 = ox2,
+                y2 = oy2,
             ))
         }
         return results

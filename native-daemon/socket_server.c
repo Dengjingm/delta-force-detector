@@ -2,16 +2,15 @@
  * socket_server.c — Unix Socket Server for frame delivery
  *
  * 创建一个 Unix domain socket (SOCK_STREAM), 监听客户端连接。
- * 收到帧后通过 sendmsg 零拷贝发送到 Java 层。
+ * 收到帧后通过 writev 聚集发送到 Java 层。
  *
- * 协议:
+ * 协议 (v2, 见 CONTRACTS C01 / frame_protocol.h):
  *   客户端连接后, 服务端每帧发送:
- *   [4 bytes: width][4 bytes: height][width*height*4 bytes: RGBA pixels]
- *
- *   客户端可以发送 "PING" 保活, 服务端回复 "PONG"。
+ *   [64-byte v2 header (little-endian)][width*height*4 bytes: RGBA pixels]
  */
 
 #include "socket_server.h"
+#include "frame_protocol.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -78,23 +77,39 @@ int socket_server_accept(int server_fd) {
     return client_fd;
 }
 
-int socket_server_send_frame(int client_fd, const FrameBuffer *fb) {
+int socket_server_send_frame(int client_fd, const FrameBuffer *fb,
+                             uint64_t frame_id, uint64_t capture_start_ns,
+                             uint64_t capture_end_ns, uint64_t stream_id) {
     if (client_fd < 0 || !fb || !fb->pixels) {
         return -1;
     }
 
-    /* 构造头部: width (4 bytes) + height (4 bytes) */
-    uint32_t header[2];
-    header[0] = (uint32_t)fb->width;
-    header[1] = (uint32_t)fb->height;
+    frame_header_t h;
+    memset(&h, 0, sizeof(h));
+    h.payload_bytes = (uint32_t)((size_t)fb->width * fb->height * 4);
+    h.width = (uint32_t)fb->width;
+    h.height = (uint32_t)fb->height;
+    h.row_stride_bytes = (uint32_t)fb->stride;
+    h.pixel_format = SVF2_PIXEL_FORMAT_RGBA8888;
+    h.rotation_degrees = 0;
+    h.frame_id = frame_id;
+    h.capture_start_ns = capture_start_ns;
+    h.capture_end_ns = capture_end_ns;
+    h.stream_id = stream_id;
+
+    uint8_t header[SVF2_HEADER_BYTES];
+    if (frame_header_encode(&h, header) != FRAME_OK) {
+        LOGE("frame_header_encode() failed");
+        return -1;
+    }
 
     size_t pixel_size = (size_t)fb->width * fb->height * 4;
-    size_t total_size = sizeof(header) + pixel_size;
+    size_t total_size = SVF2_HEADER_BYTES + pixel_size;
 
     /* 使用 writev 一次调用发送头部和数据 */
     struct iovec iov[2];
     iov[0].iov_base = header;
-    iov[0].iov_len = sizeof(header);
+    iov[0].iov_len = SVF2_HEADER_BYTES;
     iov[1].iov_base = fb->pixels;
     iov[1].iov_len = pixel_size;
 

@@ -8,20 +8,30 @@ import android.content.Intent
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.screen.vision.center.AimConfigStore
+import com.screen.vision.center.AimInjector
+import com.screen.vision.center.DaemonAimInjector
 import com.screen.vision.center.ScreenCenterController
+import com.screen.vision.center.TouchInjector
+import com.screen.vision.control.ControlClient
 import com.screen.vision.api.ResultBus
 import com.screen.vision.detection.PostProcessor
 import com.screen.vision.detection.Preprocessor
 import com.screen.vision.detection.YOLODetector
+import com.screen.vision.socket.ReceivedFrame
 import com.screen.vision.socket.UnixSocketClient
+import com.screen.vision.util.LatestSlot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 class DetectionService : Service() {
 
@@ -34,6 +44,9 @@ class DetectionService : Service() {
     private lateinit var detector: YOLODetector
     private lateinit var postProcessor: PostProcessor
     private var centerController: ScreenCenterController? = null
+    private var aimConfigStore: AimConfigStore? = null
+    private val frameSlot = LatestSlot<ReceivedFrame>()
+    private val readerDone = AtomicBoolean(false)
 
     override fun onCreate() {
         super.onCreate()
@@ -60,7 +73,11 @@ class DetectionService : Service() {
         }
 
         if (moveCenter) {
-            centerController = ScreenCenterController(scope).also { it.start() }
+            aimConfigStore = AimConfigStore.get(this)
+            val injector = chooseInjector()
+            val store = aimConfigStore!!
+            centerController = ScreenCenterController(injector, store.get())
+            store.attach(centerController)
         }
 
         scope.launch { runDetectionLoop() }
@@ -80,6 +97,18 @@ class DetectionService : Service() {
         }
     }
 
+    /** 控制 socket 可达时用 daemon 注入, 否则回退 su 注入。 */
+    private fun chooseInjector(): AimInjector {
+        val probe = ControlClient()
+        return if (probe.connect()) {
+            probe.close()
+            DaemonAimInjector()
+        } else {
+            probe.close()
+            TouchInjector()
+        }
+    }
+
     private suspend fun runDetectionLoop() {
         if (!socketClient.connect()) {
             Log.e(TAG, "Failed to connect to native daemon")
@@ -88,16 +117,27 @@ class DetectionService : Service() {
         }
         Log.i(TAG, "Connected, starting detection loop")
 
+        readerDone.set(false)
+        scope.launch(Dispatchers.IO) { readLoop() }
+
         var frameCount = 0
         var totalTimeUs = 0L
+        var totalFrameAgeUs = 0L
         val targetFrameTimeNs = 66_666_666L // 15fps
 
         while (scope.isActive) {
             val frameStart = System.nanoTime()
 
-            val bitmap = socketClient.readFrame() ?: break
-            val preprocessed = preprocessor.preprocess(bitmap)
-            bitmap.recycle()
+            val frame = frameSlot.take()
+            if (frame == null) {
+                if (readerDone.get()) break
+                delay(2)
+                continue
+            }
+
+            val frameAgeUs = (SystemClock.elapsedRealtimeNanos() - frame.header.captureEndNs) / 1000
+            val preprocessed = preprocessor.preprocess(frame.bitmap)
+            frame.bitmap.recycle()
 
             val rawOutput = detector.detect(preprocessed.inputBuffer)
             val detections = postProcessor.process(rawOutput, preprocessed)
@@ -107,8 +147,9 @@ class DetectionService : Service() {
 
             frameCount++
             totalTimeUs += (System.nanoTime() - frameStart) / 1000
+            totalFrameAgeUs += frameAgeUs
             if (frameCount % 300 == 0) {
-                Log.i(TAG, "[STATS] ${frameCount}f | avg: ${totalTimeUs / frameCount}us")
+                Log.i(TAG, "[STATS] ${frameCount}f | avg: ${totalTimeUs / frameCount}us | frameAge: ${totalFrameAgeUs / frameCount}us")
             }
 
             val elapsed = System.nanoTime() - frameStart
@@ -117,12 +158,29 @@ class DetectionService : Service() {
                 Thread.sleep(sleepNs / 1_000_000, (sleepNs % 1_000_000).toInt())
             }
         }
+
         cleanup()
+    }
+
+    /** 阻塞读取 socket 并写入最新帧槽；被替换的旧帧立即回收。 */
+    private fun readLoop() {
+        try {
+            while (scope.isActive) {
+                val frame = socketClient.readFrame() ?: break
+                frameSlot.publish(frame)?.bitmap?.recycle()
+            }
+        } finally {
+            readerDone.set(true)
+            // 读端结束后槽中残留帧不会再被消费，由读端回收，避免关闭竞态下的泄漏。
+            frameSlot.clear()?.bitmap?.recycle()
+        }
     }
 
     private fun cleanup() {
         centerController?.stop()
         centerController = null
+        aimConfigStore?.attach(null)
+        aimConfigStore = null
         ResultBus.publish(emptyList())
         isRunning = false
         try { socketClient.disconnect() } catch (_: Exception) { }

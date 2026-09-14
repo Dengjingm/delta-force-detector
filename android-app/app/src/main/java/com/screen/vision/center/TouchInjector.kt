@@ -3,18 +3,40 @@ package com.screen.vision.center
 import android.util.Log
 
 /**
- * root 触控注入。通过 `su -c input swipe` 注入一段拖拽，
- * 用于将屏幕中心朝目标方向移动。
+ * root 触控注入：连续按住手势。
  *
- * 每次调用会新起一个 su 进程；`input swipe` 的 duration 控制移动平滑度。
+ * acquire 注入 DOWN，moveBy 按绝对坐标注入 MOVE，release 注入 UP。
+ * 每次调用仍会新起一个 su 进程；这是过渡实现，后续替换为 daemon 内 uinput
+ * 以消除逐事件进程 spawn 的延迟。
  */
-class TouchInjector {
+class TouchInjector : AimInjector {
 
-    fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long): Boolean {
+    private var anchorX = 0
+    private var anchorY = 0
+    private var holding = false
+
+    override fun acquire(anchorX: Int, anchorY: Int) {
+        this.anchorX = anchorX
+        this.anchorY = anchorY
+        holding = exec("input motionevent DOWN $anchorX $anchorY")
+    }
+
+    override fun moveBy(dx: Int, dy: Int) {
+        if (!holding || (dx == 0 && dy == 0)) return
+        anchorX += dx
+        anchorY += dy
+        exec("input motionevent MOVE $anchorX $anchorY")
+    }
+
+    override fun release() {
+        if (!holding) return
+        holding = false
+        exec("input motionevent UP $anchorX $anchorY")
+    }
+
+    private fun exec(cmd: String): Boolean {
         return try {
-            val cmd = "input swipe $x1 $y1 $x2 $y2 $durationMs"
-            val p = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
-            p.waitFor() == 0
+            Runtime.getRuntime().exec(arrayOf("su", "-c", cmd)).waitFor() == 0
         } catch (e: Exception) {
             Log.e(TAG, "Touch injection failed: ${e.message}")
             false

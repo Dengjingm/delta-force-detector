@@ -3,16 +3,14 @@ package com.screen.vision.socket
 import android.graphics.Bitmap
 import java.io.InputStream
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 /**
  * 连接到 Native 守护进程的 Unix Socket 客户端。
  *
- * 通过 LocalSocket (AF_UNIX) 连接守护进程,
- * 从守护进程接收逐帧屏幕数据。
+ * 通过 LocalSocket (AF_UNIX) 连接守护进程, 从守护进程接收逐帧屏幕数据。
  *
- * 协议:
- *   [4 bytes: width][4 bytes: height][width*height*4 bytes: RGBA pixels]
+ * 协议 (v2, CONTRACTS C01):
+ *   [64-byte header (little-endian)][width*height*4 bytes: RGBA pixels]
  */
 class UnixSocketClient(private val socketPath: String = SOCKET_PATH) {
 
@@ -35,24 +33,19 @@ class UnixSocketClient(private val socketPath: String = SOCKET_PATH) {
         }
     }
 
-    fun readFrame(): Bitmap? {
+    fun readFrame(): ReceivedFrame? {
         val stream = inputStream ?: return null
         return try {
-            val header = ByteArray(HEADER_SIZE)
-            readFully(stream, header)
-            val buffer = ByteBuffer.wrap(header).order(ByteOrder.nativeOrder())
-            val width = buffer.int
-            val height = buffer.int
+            val headerBytes = ByteArray(FrameHeader.HEADER_BYTES)
+            readFully(stream, headerBytes)
+            val header = FrameHeader.decode(headerBytes)
 
-            if (width <= 0 || height > MAX_DIMENSION) return null
-
-            val pixelCount = width * height * 4
-            val pixels = ByteArray(pixelCount)
+            val pixels = ByteArray(header.payloadBytes.toInt())
             readFully(stream, pixels)
 
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val bitmap = Bitmap.createBitmap(header.width, header.height, Bitmap.Config.ARGB_8888)
             bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(pixels))
-            bitmap
+            ReceivedFrame(bitmap, header)
         } catch (e: Exception) {
             android.util.Log.e(TAG, "Read frame failed: ${e.message}")
             null
@@ -78,7 +71,11 @@ class UnixSocketClient(private val socketPath: String = SOCKET_PATH) {
     companion object {
         private const val TAG = "UnixSocketClient"
         const val SOCKET_PATH = "/data/local/tmp/screen-vision.sock"
-        const val HEADER_SIZE = 8
-        const val MAX_DIMENSION = 4096
     }
 }
+
+/** 一帧完整数据：位图 + v2 帧头元数据。 */
+data class ReceivedFrame(
+    val bitmap: Bitmap,
+    val header: FrameHeader,
+)

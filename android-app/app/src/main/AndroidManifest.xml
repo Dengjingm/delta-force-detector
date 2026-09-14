@@ -21,6 +21,10 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".calibration.CalibrationActivity"
+            android:exported="false" />
+
         <service
             android:name=".service.DetectionService"
             android:foregroundServiceType="specialUse"

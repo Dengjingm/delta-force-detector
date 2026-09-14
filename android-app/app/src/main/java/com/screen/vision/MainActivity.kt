@@ -1,6 +1,7 @@
 package com.screen.vision
 
 import android.app.Activity
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.view.MotionEvent
@@ -9,6 +10,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.screen.vision.api.ScreenVisionSDK
+import com.screen.vision.calibration.CalibrationActivity
 import com.screen.vision.motion.MotionCalibration
 import com.screen.vision.motion.MotionDiagnosticsSession
 import com.screen.vision.motion.MotionDiagnosticsState
@@ -76,6 +78,14 @@ class MainActivity : Activity() {
             setOnClickListener { ScreenVisionSDK.stop(this@MainActivity) }
         }
         root.addView(stopBtn)
+
+        val calibrationBtn = Button(this).apply {
+            text = "Calibration"
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, CalibrationActivity::class.java))
+            }
+        }
+        root.addView(calibrationBtn)
 
         motionText = TextView(this).apply {
             text = "Motion diagnostics stopped"

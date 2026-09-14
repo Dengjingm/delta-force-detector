@@ -1,6 +1,8 @@
 #ifndef SOCKET_SERVER_H
 #define SOCKET_SERVER_H
 
+#include <stdint.h>
+
 #include "screencap.h"
 
 /*
@@ -19,10 +21,13 @@ int socket_server_accept(int server_fd);
 
 /*
  * 发送一帧到客户端
- * 格式: [width:4][height:4][RGBA pixels:width*height*4]
+ * 格式: [64-byte v2 header (LE)][RGBA pixels:width*height*4]
+ * frame_id / capture_*_ns / stream_id 由调用方(采集循环)提供, 见 CONTRACTS C01。
  * 返回 0 成功, -1 失败
  */
-int socket_server_send_frame(int client_fd, const FrameBuffer *fb);
+int socket_server_send_frame(int client_fd, const FrameBuffer *fb,
+                             uint64_t frame_id, uint64_t capture_start_ns,
+                             uint64_t capture_end_ns, uint64_t stream_id);
 
 /*
  * 关闭连接

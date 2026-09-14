@@ -14,10 +14,10 @@ data class ScreenCenterConfig(
     val invertX: Boolean = false,
     /** 垂直反向 */
     val invertY: Boolean = false,
-    /** 注入节拍（ms），约 60Hz */
-    val moveIntervalMs: Long = 16L,
-    /** 每次 input swipe 的滑动时长（ms） */
-    val swipeDurationMs: Long = 16L,
+    /** 跨帧关联的最大中心距离（px），小于该值视为同一目标 */
+    val associateDistancePx: Int = 60,
+    /** 连续多少帧未匹配到锁定目标后释放并重新获取 */
+    val releaseAfterMisses: Int = 5,
     /** 总开关 */
     val enabled: Boolean = true,
 )
