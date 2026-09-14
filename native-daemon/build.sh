@@ -10,7 +10,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 NDK_HOME="${ANDROID_NDK_HOME:-${ANDROID_NDK:-}}"
 if [ -z "$NDK_HOME" ]; then
-    for dir in "$HOME/Library/Android/sdk/ndk" "$HOME/Android/Sdk/ndk" /usr/local/lib/android/sdk/ndk; do
+    for dir in "$HOME/Library/Android/sdk/ndk" "$HOME/Android/Sdk/ndk" /usr/local/lib/android/sdk/ndk "$ANDROID_HOME/ndk" "$ANDROID_SDK_ROOT/ndk"; do
         if [ -d "$dir" ]; then
             NDK_HOME=$(ls -d "$dir"/*/ 2>/dev/null | sort -V | tail -1)
             [ -n "$NDK_HOME" ] && break
@@ -38,8 +38,8 @@ cmake --build "$BUILD_DIR" -j"$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
 
 OUTPUT_DIR="$PROJECT_ROOT/android-app/app/src/main/res/raw"
 mkdir -p "$OUTPUT_DIR"
-cp "$BUILD_DIR/screen-visiond" "$OUTPUT_DIR/"
-echo "Built: $OUTPUT_DIR/screen-visiond ($(du -h "$OUTPUT_DIR/screen-visiond" | cut -f1))"
+cp "$BUILD_DIR/screen-visiond" "$OUTPUT_DIR/screen_visiond"
+echo "Built: $OUTPUT_DIR/screen_visiond ($(du -h "$OUTPUT_DIR/screen_visiond" | cut -f1))"
 
 if adb devices | grep -q "device$"; then
     adb push "$BUILD_DIR/screen-visiond" /data/local/tmp/

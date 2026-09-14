@@ -46,22 +46,26 @@
 │   ├── socket_server.c / .h          单客户端 AF_UNIX 流式传输（仍 v1，未接 frame_protocol）
 │   ├── frame_protocol.c / .h         v2 64 字节 LE 编解码与校验（host 已测，未接入）
 │   ├── tests/test_frame_protocol.c   frame_protocol host 测试（gcc C11 严格警告 + UBSan）
-│   ├── CMakeLists.txt                C11、严格警告；Android/log 链接，缺 dl
-│   ├── Android.mk                    备选配置；未固定 ABI/API，缺 dl
-│   └── build.sh                      arm64/API28 构建、复制资源、发现设备自动推送
+│   ├── CMakeLists.txt                C11、严格警告；Android/log/dl 链接
+│   ├── Android.mk                    备选配置；未固定 ABI/API；-llog -landroid -ldl
+│   └── build.sh                      arm64/API28 构建、复制资源为 screen_visiond、发现设备自动推送
 └── android-app/
+    ├── gradlew / gradlew.bat         Gradle Wrapper 入口（8.7）
+    ├── gradle/wrapper/               wrapper jar + properties（gradle-8.7-bin）
     ├── settings.gradle.kts           仓库和 :app；工程名尚为 HonorOfKingsDetector
     ├── build.gradle.kts              AGP 8.2.0 / Kotlin 1.9.20
     ├── gradle.properties             Gradle、AndroidX 配置
     └── app/
         ├── build.gradle.kts          application 模块；min 28 / target 34 / JDK 17
         └── src/main/
-            ├── AndroidManifest.xml  Application、Service 声明
+            ├── AndroidManifest.xml  Application、Activity、前台服务声明
+            ├── res/raw/screen_visiond  arm64 daemon 二进制（NDK 交叉编译产物）
             └── java/com/screen/vision/
                 ├── VisionApp.kt                 仅保存 Application 实例
+                ├── MainActivity.kt              诊断入口：状态、启动/停止
                 ├── api/ScreenVisionSDK.kt       start / observe / tap / swipe / stop
                 ├── service/DetectionService.kt  初始化、收帧、推理与 Flow
-                ├── detection/YOLODetector.kt    assets 模型映射与 TFLite
+                ├── detection/YOLODetector.kt    assets 模型映射与 TFLite（XNNPACK CPU）
                 ├── detection/Preprocessor.kt    LetterBox、RGB float32
                 ├── detection/PostProcessor.kt  输出解析、NMS、原图中心坐标
                 ├── socket/UnixSocketClient.kt   读满帧头和像素，创建 Bitmap
@@ -69,7 +73,7 @@
                 └── model/DetectResult.kt        elementId / x / y / confidence
 ```
 
-当前没有 Gradle Wrapper、Activity/可启动演示入口、独立 library/AAR 模块、测试目录或 CI。APK 中没有 `assets/model.tflite`。训练数据的 `images/{train,val}`、`labels/{train,val}` 也尚未建立。
+Gradle Wrapper（8.7）与 `MainActivity` 诊断入口已落地，debug APK 可构建（M1）；仍无独立 library/AAR 模块、测试目录或 CI。APK 中没有 `assets/model.tflite`。训练数据的 `images/{train,val}`、`labels/{train,val}` 也尚未建立。
 
 ## 3. 调用链与断点
 
@@ -107,7 +111,7 @@
   │    onStartCommand() → YOLODetector / PostProcessor → runDetectionLoop()
   │      connect → readFrame → preprocess → detect → process → Service.results
   └─ 延时 500ms 后 bindService()
-       Service.onBind() 当前错误返回 SharedFlow
+       Service.onBind() 返回 Binder（已修正，不再返回 Flow）
        onServiceConnected() 只记日志
        × 未将 Service.results 转发给 SDK.observe()
 ```
@@ -157,12 +161,12 @@
 |---|---|
 | `/data/local/tmp/screen-visiond` | SDK 启动的设备二进制；依赖人工/脚本部署 |
 | `/data/local/tmp/sv_frame.raw` | fallback 临时文件名，但 `screencap -p` 实际输出 PNG |
-| `native-daemon/build/screen-visiond` | 预期 NDK 构建产物，尚未生成 |
-| `android-app/app/src/main/res/raw/screen-visiond` | build.sh 的当前复制目标；连字符不符合 Android 资源命名，需要修正 |
+| `native-daemon/build/screen-visiond` | NDK arm64 构建产物（M1 已生成，约 32K） |
+| `android-app/app/src/main/res/raw/screen_visiond` | build.sh 的复制目标（M1 已生成，资源名已去除连字符） |
 | `android-app/app/src/main/assets/model.tflite` | 预期内置模型；不存在 |
 | `context.filesDir/models/{model.tflite,version.txt}` | ModelUpdater 缓存；不是 `/data/local/tmp/` |
 | `{version,url,md5}` | 当前远端接口草案；默认 `.example.com` 地址为占位，md5 参数未校验 |
-| Gradle / Manifest | minSdk=28（Android 9），targetSdk=34；声明 mediaProjection Service，但未接 MediaProjection 授权流程，相关前台服务及网络权限待修复 |
+| Gradle / Manifest | minSdk=28（Android 9），targetSdk=34；已声明 `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_SPECIAL_USE`，Service `foregroundServiceType=specialUse`；不再声明 mediaProjection（root 采集方案不需要） |
 
 `getModelPath()` 可以返回下载文件的绝对路径，但 SDK 未使用它，detector 也只支持 assets；因此当前不具备有效热更新。root 进程、普通 App UID、文件权限和 SELinux 访问应在同一目标设备上联调，不能由 `chmod` 成功推断可连接。
 

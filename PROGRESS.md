@@ -1,6 +1,6 @@
 # 建设评估与后续计划
 
-更新日期：2026-09-14。审查基线：`ab93f11`；本轮在文档之外开始落地源码：完成 T07（v2 帧协议黄金 fixture）与 T08 的 C 端编解码（`frame_protocol.c/.h` + host 测试），尚未接入 socket 传输或 Android 端。完整开发方案入口为 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)；实施顺序见 [TASKS.md](docs/plan/TASKS.md)，合同与验收分别见 [CONTRACTS](docs/plan/CONTRACTS.md) / [VALIDATION](docs/plan/VALIDATION.md)。
+更新日期：2026-09-14。审查基线：`ab93f11`；本轮完成 T07/T08（v2 帧协议黄金 fixture 与 C 端编解码 `frame_protocol.c/.h` + host 测试，尚未接入 socket 传输）与 M1 可复现构建（修 B01/B02/B06，生成 Gradle Wrapper 与 MainActivity 诊断入口，NDK arm64 交叉编译通过，debug APK assemble 成功）。完整开发方案入口为 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)；实施顺序见 [TASKS.md](docs/plan/TASKS.md)，合同与验收分别见 [CONTRACTS](docs/plan/CONTRACTS.md) / [VALIDATION](docs/plan/VALIDATION.md)。
 
 **结论：模块划分可以保留，但当前仍是未连通的原型脚手架。后续应从“先采集并完整训练，再编译联调”调整为“先建立构建与模型契约基线，数据建设并行；离线验证通过后接入 root 截图，再验收精度和持续性能”。**
 
@@ -21,16 +21,16 @@
 
 ## 已知问题与优先级
 
-以下优先级是本项目的交付顺序：**P0 为阻断最小闭环，P1 为可靠性与评估必要条件，P2 为基线稳定后的交付能力。** 所有代码问题仍为待修复。
+以下优先级是本项目的交付顺序：**P0 为阻断最小闭环，P1 为可靠性与评估必要条件，P2 为基线稳定后的交付能力。** B01/B02/B06 已在 M1 修复并通过构建验证；其余代码问题仍待修复。
 
 | 编号 | 优先级 | 代码证据与影响 | 对应动作 / 验收 |
 |---|---|---|---|
-| B01 | P0 | [DetectionService](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt) 使用 `#` 注释、`onBind()` 返回 Flow、普通 suspend 方法中无接收者地使用 `isActive`；[SDK](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt) 的独立 object 内嵌 companion object | 修源码与构建配置；实际 Kotlin 编译、APK assemble 通过 |
-| B02 | P0 | [socket_server.c](native-daemon/socket_server.c) 缺 `chmod` 声明头文件；[main.c](native-daemon/main.c) `%d` 接收 long long；CMake/Android.mk 缺 `dl`；[build.sh](native-daemon/build.sh) 生成带连字符的 Android raw 资源名 | NDK 严格警告构建通过，APK 资源打包通过；固定 ABI/API；拆开纯构建和显式部署 |
+| B01 | P0 | [DetectionService](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt) 使用 `#` 注释、`onBind()` 返回 Flow、普通 suspend 方法中无接收者地使用 `isActive`；[SDK](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt) 的独立 object 内嵌 companion object | ✅ M1 已修：`#`→`//`、`onBind()` 返回 `Binder()`、显式 `import kotlinx.coroutines.isActive`、object 内 companion 移除；`assembleDebug` 通过 |
+| B02 | P0 | [socket_server.c](native-daemon/socket_server.c) 缺 `chmod` 声明头文件；[main.c](native-daemon/main.c) `%d` 接收 long long；CMake/Android.mk 缺 `dl`；[build.sh](native-daemon/build.sh) 生成带连字符的 Android raw 资源名 | ✅ M1 已修：`sys/stat.h`、FPS 统计改 `long long`+`%lld`、`-ldl`/`dl`、raw 资源名 `screen_visiond`；NDK r26d arm64 交叉编译通过（32K）；拆开纯构建与显式部署仍待办 |
 | B03 | P0 | [screencap.c](native-daemon/screencap.c) 默认路径的 `getPixels` 指针从未绑定，C++ 符号/调用方式不正确；fallback 执行 `screencap -p` 却把 PNG 当 raw | 先建立正确的低速截图基线；检查实际 raw/PNG 格式、像素顺序、stride、尺寸及分配；不能只删除 `-p` 或硬猜 raw 头 |
 | B04 | P0 | [export_tflite.py](training/export_tflite.py) `nms=True`；[YOLODetector](android-app/app/src/main/java/com/screen/vision/detection/YOLODetector.kt) 按 `5+nc` 猜类别并用二维数组接三维输出；[PostProcessor](android-app/app/src/main/java/com/screen/vision/detection/PostProcessor.kt) 按交错 raw/objectness 解析 | 固定并检查真实模型契约，匹配输出形状、坐标单位及 NMS；同图跨引擎结果对齐，不能只验证“不崩溃” |
 | B05 | P0 | [SDK](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt) 的 `setResultSource()` 没有调用者，绑定回调只记日志；Service 仅发非空结果 | 接通合法 Binder 与 Flow；验证“有目标→无目标→断流→停止→重启”，不保留旧目标 |
-| B06 | P0 | [Manifest](android-app/app/src/main/AndroidManifest.xml) 未声明必要的前台服务权限，声明 mediaProjection 却没有对应授权流程；无 Activity；[YOLODetector](android-app/app/src/main/java/com/screen/vision/detection/YOLODetector.kt) 在主线程创建 GPU、其他线程推理/关闭 | 明确 root 采集方案适用的 Service 类型和启动流程，检查合并 Manifest；提供最小入口；GPU 同线程生命周期与完整 CPU 回退 |
+| B06 | P0 | [Manifest](android-app/app/src/main/AndroidManifest.xml) 未声明必要的前台服务权限，声明 mediaProjection 却没有对应授权流程；无 Activity；[YOLODetector](android-app/app/src/main/java/com/screen/vision/detection/YOLODetector.kt) 在主线程创建 GPU、其他线程推理/关闭 | ✅ M1 已修（构建/启动部分）：声明 `FOREGROUND_SERVICE` + `SPECIAL_USE`、移除 mediaProjection、新增 `MainActivity`；GPU delegate 移除改 XNNPACK CPU，GPU 同线程生命周期留待 M3 重加时落实 |
 | B07 | P1 | [train.py](training/train.py) 依赖未经确认的 `yolov8s-p2.pt`，只检查 YAML；[visualize.py](training/visualize.py) 标签路径多出一层 `images`；[export_tflite.py](training/export_tflite.py) 忽略返回路径，仅扫描权重同级 | 明确 P2 YAML/迁移权重来源、数据预检、正确配对与导出定位；少量样例跑通后再正式训练 |
 | B08 | P1 | [帧发送端](native-daemon/socket_server.c) 忽略 stride，无短写重试与 SIGPIPE 防护；[接收端](android-app/app/src/main/java/com/screen/vision/socket/UnixSocketClient.kt) 漏 width 上限/height 下限，Int 乘法可能溢出 | 固定 LE、紧密 RGBA、安全尺寸计算；覆盖分段读写、半帧断流、慢客户端和对端关闭 |
 | B09 | P1 | [SDK](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt) 提前设 started，缺 daemon 安装/就绪与实例管理，延时绑定任务不取消；[Service](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt) 首次连接失败绕过 cleanup，无重连及 finally | 建立启动/就绪/运行/失败/停止状态；验证快速 start/stop、daemon 迟到/退出、模型加载失败后恢复 |
@@ -45,7 +45,7 @@
 | 编号 | 代码证据 | 与合同/规格的偏差 | 归属任务 |
 |---|---|---|---|
 | N1 | [Preprocessor.kt](android-app/app/src/main/java/com/screen/vision/detection/Preprocessor.kt) `:29-33` 计算单一 `scale`，`:57-59` 将其同时存入 `scaleX=scaleY` | 违反 C03 `scaleX=newW/W`、`scaleY=newH/H` 逐轴实际比例，且缺 `max(1,floor)` 窄图保护。K70 3200×1440 两端恰好 0.3 才未暴露，奇数/非等比分辨率下中心回映会偏 | T09（关联 B04/B11） |
-| N2 | [DetectionService.kt](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt) `:61`、`:71` 返回 `START_STICKY` | 与 ANDROID §4 要求的 `START_NOT_STICKY` 相反，进程退出后会错误重启 root 采集 | T02/A06（关联 B06） |
+| N2 | ~~[DetectionService.kt](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt) `:61`、`:71` 返回 `START_STICKY`~~ | ~~与 ANDROID §4 要求的 `START_NOT_STICKY` 相反~~ | ✅ 已修：两处均改 `START_NOT_STICKY`，随 M1 构建通过 |
 | N3 | [main.c](native-daemon/main.c) `:46,58,94,104,129` 计时用 `CLOCK_MONOTONIC` | 与 C05/NATIVE §4 要求的 `CLOCK_BOOTTIME` 不符，禁止与 Android 跨进程相减 | T14（关联 B11） |
 | N4 | [requirements.txt](training/requirements.txt) 同时含 torch/ultralytics/tensorflow | 与 TRAINING §5「训练与导出环境分离」矛盾，训练环境不应含 TensorFlow | T01/T05/T06（关联 B10） |
 | N5 | [.gitignore](.gitignore) 忽略 `images/val`/`labels/val`，漏 `test/incoming/review/manifests` | 未覆盖规划数据布局 | T03/T04（关联 B10） |
@@ -74,7 +74,7 @@
 | 里程碑 | 依赖与工作 | 验收条件 | 当前状态 |
 |---|---|---|---|
 | M0 完整规划 | 现状、目标架构、合同、模块规格、任务与验收 | 11份文档区分现状与未来；26项核心任务有依赖/产物/门槛，未知有固定解决路线 | 本轮完成，仅文档 |
-| M1 可复现构建 | 修 B01/B02/B06 的构建与启动项；固定 JDK/Gradle/SDK/NDK，补 Wrapper、最小入口、构建检查；分离 build/deploy | NDK arm64 产物和 debug APK 实际构建通过；APK 可启动；缺模型/未 root 时清晰反馈；不把“安装成功”当作检测成功 | 待实施；不依赖 root |
+| M1 可复现构建 | 修 B01/B02/B06 的构建与启动项；固定 JDK/Gradle/SDK/NDK，补 Wrapper、最小入口、构建检查；分离 build/deploy | NDK arm64 产物和 debug APK 实际构建通过；APK 可启动；缺模型/未 root 时清晰反馈；不把“安装成功”当作检测成功 | 构建部分完成（NDK arm64 + debug APK 通过）；安装/启动与缺模型/未 root 反馈待真机验证；不依赖 root |
 | M2 数据规则与模型契约 | 可与 M1 并行；修 B07/B10，确定 P2 来源、依赖、标注规则、划分、导出检查和元数据 | 数据预检可区分缺标/空标/非法标注；无对局泄漏；模型可加载；实际导出文件及 tensor 契约可追溯 | 待实施；不依赖 root |
 | M3 离线正确性与推理基准 | 依赖 M1/M2；先少量可靠样例训练/导出与 CPU 基线，再修 B04 和 GPU 生命周期 | 同组标注截图比较 PyTorch/TFLite/Android 的框、分数、中心坐标；记录误差与失败样例；K70 本地图片可推理，验证 GPU 及 CPU 回退并记录延迟 | 待实施；K70 此阶段无需 root |
 | M4 root 截图与 SDK 闭环 | 依赖 M1/M3 和设备 root；修 B03/B05/B08/B09，先低频正确截图，再接模型 | 截图像素/方向/尺寸正确；SDK 实际收到结果；有目标→空帧→断流→恢复；重复 start/stop 可退出、可重启，无过期结果 | 待设备条件与代码修复 |
@@ -117,7 +117,8 @@
 | T07 黄金 fixture 生成 | `generate_fixtures.py` 逐字段 struct 打包与独立手写 hex 断言一致，产出 72 字节 `frame_v2_rg_2x1.bin`，SHA-256=`1e1a57f8…73fe`，写入 `manifest.json`/README | 帧协议 golden 基准已落地；长度/hash/字段期待值独立可复核 |
 | T08-C v2 编解码 host 测试 | `frame_protocol.c/.h` 以 gcc C11 `-Wall -Wextra -Werror` 编译，`test_frame_protocol.c` 全绿：golden 逐字节往返、错 magic/version/headerBytes、越界尺寸/stride/format/rotation/payload/时间顺序/零 ID 均正确拒绝，UBSan 无未定义行为 | C 端 v2 编解码与校验已 host 验证；`socket_server.c` 仍为 v1、Kotlin 端未实现，接入属 T14/T08-Kotlin |
 | Python 训练依赖（CPU） | venv `venv-training` 内 torch 2.14.0+cpu / torchvision 0.29.0+cpu / ultralytics 8.4.150 / tensorflow 2.21.0 / opencv-python-headless 4.11.0.86 / numpy 1.26.4 / pillow 12.3.0 / matplotlib 3.11.2 / pyyaml 6.0.3 / tqdm 4.70.1，全部 import 通过；labelimg 未装（仅 GUI）；torch 无 CUDA | CPU 训练/导出依赖就绪，尚未跑通训练或导出；numpy 锁 1.26.4 以兼容 TF，opencv 用 headless 版规避无头机缺 libGL |
+| M1 构建（NDK + Android） | `build.sh` 用 NDK r26d 交叉编译 arm64 `screen-visiond`（32K）→ `res/raw/screen_visiond`；Gradle 8.7 + JDK 17 生成 Wrapper；`assembleDebug` 产出 `app-debug.apk`（arm64-only，约 9.3M） | M1 构建闭环已通；不代表可安装/检测；GPU delegate 已移除改 XNNPACK CPU，待 M3 重加 |
 
-本轮新增源码：`contracts/fixtures/`（生成器+bin+manifest+README）、`native-daemon/frame_protocol.{c,h}`、`native-daemon/tests/test_frame_protocol.c`。未生成数据、模型、APK 或 daemon 产物，未连接/改动手机；ASan 因本机缺 `libclang_rt.asan` 运行库未跑（UBSan 已跑）。
+本轮新增源码：`contracts/fixtures/`（生成器+bin+manifest+README）、`native-daemon/frame_protocol.{c,h}`、`native-daemon/tests/test_frame_protocol.c`；M1 另增 `android-app/gradlew` + `gradle/wrapper/`、`MainActivity.kt`、`res/raw/screen_visiond`（arm64 二进制）。已产出 `native-daemon/build/screen-visiond` 与 `android-app/app/build/outputs/apk/debug/app-debug.apk`；未生成数据、模型或真机记录；ASan 因本机缺 `libclang_rt.asan` 运行库未跑（UBSan 已跑）。
 
-下一批可继续独立任务：T01/T02（JDK17+Gradle+SDK+NDK 已就绪，可出 debug APK 与 arm64 交叉编译）与 T03（数据语义与清单，纯文档/脚本）。T08 的 Kotlin 端 `FrameHeader.kt` 现可编译验证；`socket_server.c` 接入 v2 属 T14。训练/导出依赖已装 CPU 版（venv-training），可开始 smoke run，但尚无训练数据/权重，不能声称训练或导出成功。用户暂无需补充 root 或 Android 版本。
+下一批可继续独立任务：T03（数据语义与清单，纯文档/脚本）与 T08 的 Kotlin 端 `FrameHeader.kt` 编译验证；`socket_server.c` 接入 v2 属 T14。M1 构建已闭环（debug APK + arm64 交叉编译），真机安装/启动与缺模型/未 root 反馈待 root 与设备条件。训练/导出依赖已装 CPU 版（venv-training），可开始 smoke run，但尚无训练数据/权重，不能声称训练或导出成功。用户暂无需补充 root 或 Android 版本。

@@ -136,11 +136,13 @@ int main(void) {
         total_send_us += send_us;
 
         if (frame_count % 300 == 0) {
-            LOGI("[STATS] %d frames | capture avg: %lldus | send avg: %lldus | fps: %d",
+            long long fps = (long long)frame_count * 1000000LL
+                          / (total_capture_us + total_send_us);
+            LOGI("[STATS] %d frames | capture avg: %lldus | send avg: %lldus | fps: %lld",
                  frame_count,
                  total_capture_us / frame_count,
                  total_send_us / frame_count,
-                 frame_count * 1000000 / (total_capture_us + total_send_us));
+                 fps);
         }
 
         /* 等待保持 30fps */

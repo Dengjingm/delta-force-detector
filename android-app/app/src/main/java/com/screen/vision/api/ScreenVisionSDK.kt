@@ -13,20 +13,17 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
 /**
- * ScreenVisionSDK — 通用屏幕元素实时定位 API。
+ * ScreenVisionSDK — 屏幕元素实时定位 API。
  *
  * 使用方式:
  * ```kotlin
- * ScreenVisionSDK.start(context, deltaForceClasses)
+ * ScreenVisionSDK.start(context, listOf("enemy"))
  * ScreenVisionSDK.observe().collect { results -> ... }
  * ScreenVisionSDK.tap(x, y)
  * ScreenVisionSDK.stop(context)
  * ```
  *
- * 三角洲行动 (Delta Force) 默认 12 类元素:
- * joystick, fire_btn, aim_btn, reload_btn, jump_btn,
- * crouch_btn, minimap, health_bar, operator_skill,
- * pickup_btn, backpack_btn, enemy
+ * 三角洲行动 (Delta Force) 当前唯一类别为 `enemy`。
  */
 object ScreenVisionSDK {
 
@@ -137,7 +134,5 @@ object ScreenVisionSDK {
         }
     }
 
-    companion object {
-        private const val TAG = "ScreenVisionSDK"
-    }
+    private const val TAG = "ScreenVisionSDK"
 }

@@ -91,7 +91,7 @@ class PostProcessor(
         val cx = ((box.x1 + box.x2) / 2 - preproc.padX) / preproc.scaleX
         val cy = ((box.y1 + box.y2) / 2 - preproc.padY) / preproc.scaleY
         return DetectResult(
-            elementId = classNames.getOrElse(box.classId) { "class_$box.classId" },
+            elementId = classNames.getOrElse(box.classId) { "class_${box.classId}" },
             x = cx.coerceIn(0f, preproc.originalWidth.toFloat()).toInt(),
             y = cy.coerceIn(0f, preproc.originalHeight.toFloat()).toInt(),
             confidence = box.confidence,

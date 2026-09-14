@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -14,19 +15,20 @@ import com.screen.vision.detection.Preprocessor
 import com.screen.vision.detection.YOLODetector
 import com.screen.vision.model.DetectResult
 import com.screen.vision.socket.UnixSocketClient
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.launch
 
-/**
- * 前台 Service — 30fps 检测主循环。
- *
- * 连接 Native Socket 接收帧 → 预处理 → TFLite 推理 → 后处理 → 发射结果
- */
 class DetectionService : Service() {
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var isRunning = false
+    private var modelReady = false
 
     private lateinit var socketClient: UnixSocketClient
     private lateinit var preprocessor: Preprocessor
@@ -46,19 +48,21 @@ class DetectionService : Service() {
     private fun initComponents() {
         socketClient = UnixSocketClient()
         preprocessor = Preprocessor(inputSize = 960)
-        // detector/postProcessor 由 SDK 传入 classNames 后初始化
     }
 
-    /**
-     * 由 ScreenVisionSDK 调用，注入训练好的类别名称
-     */
     fun initWithClasses(classNames: List<String>, modelPath: String = "model.tflite") {
-        detector = YOLODetector(this, modelPath, classNames = classNames)
-        postProcessor = PostProcessor(classNames = classNames)
+        modelReady = try {
+            detector = YOLODetector(this, modelPath, classNames = classNames)
+            postProcessor = PostProcessor(classNames = classNames)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Model load failed ($modelPath): ${e.message}")
+            false
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (isRunning) return START_STICKY
+        if (isRunning) return START_NOT_STICKY
         isRunning = true
 
         val classNames = intent?.getStringArrayExtra(EXTRA_CLASS_NAMES)?.toList()
@@ -66,24 +70,27 @@ class DetectionService : Service() {
         val modelPath = intent?.getStringExtra(EXTRA_MODEL_PATH) ?: "model.tflite"
 
         initWithClasses(classNames, modelPath)
-
         scope.launch { runDetectionLoop() }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private suspend fun runDetectionLoop() {
+        if (!modelReady) {
+            Log.e(TAG, "Model not ready; detection loop not started")
+            return
+        }
         if (!socketClient.connect()) {
             Log.e(TAG, "Failed to connect to native daemon")
             _results.emit(emptyList())
             return
         }
-        Log.i(TAG, "Connected, starting 15fps loop")
+        Log.i(TAG, "Connected, starting detection loop")
 
         var frameCount = 0
         var totalTimeUs = 0L
-        val targetFrameTimeNs = 66_666_666L  # 15fps
+        val targetFrameTimeNs = 66_666_666L // 15fps
 
-        while (isActive) {
+        while (scope.isActive) {
             val frameStart = System.nanoTime()
 
             val bitmap = socketClient.readFrame() ?: break
@@ -113,13 +120,18 @@ class DetectionService : Service() {
     private fun cleanup() {
         isRunning = false
         try { socketClient.disconnect() } catch (_: Exception) { }
-        try { detector.close() } catch (_: Exception) { }
+        if (modelReady) {
+            try { detector.close() } catch (_: Exception) { }
+        }
     }
 
-    override fun onBind(intent: Intent?) = results
+    override fun onBind(intent: Intent?): IBinder = Binder()
 
     override fun onDestroy() {
-        isRunning = false; scope.cancel(); cleanup(); super.onDestroy()
+        isRunning = false
+        scope.cancel()
+        cleanup()
+        super.onDestroy()
     }
 
     private fun createNotificationChannel() {
@@ -135,7 +147,7 @@ class DetectionService : Service() {
     private fun buildNotification(): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Screen Vision")
-            .setContentText("15fps detection running...")
+            .setContentText("Detection service running")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

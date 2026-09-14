@@ -8,7 +8,7 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE    := screen-visiond
 LOCAL_SRC_FILES := main.c screencap.c socket_server.c
-LOCAL_LDLIBS    := -llog -landroid
+LOCAL_LDLIBS    := -llog -landroid -ldl
 LOCAL_CFLAGS    := -Wall -Wextra -O2
 
 include $(BUILD_EXECUTABLE)

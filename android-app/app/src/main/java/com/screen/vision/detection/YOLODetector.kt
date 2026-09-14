@@ -3,8 +3,6 @@ package com.screen.vision.detection
 import android.content.Context
 import android.util.Log
 import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.gpu.CompatibilityList
-import org.tensorflow.lite.gpu.GpuDelegate
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -12,9 +10,8 @@ import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 
 /**
- * YOLOv8nano TFLite 推理引擎。
+ * YOLOv8 TFLite 推理引擎 (XNNPACK CPU)。
  *
- * 优先 GPU Delegate，回退 XNNPACK CPU。
  * numClasses 从模型输出 tensor shape 自动推导。
  */
 class YOLODetector(
@@ -32,17 +29,6 @@ class YOLODetector(
         val model = loadModelFile(context, modelPath)
         val options = Interpreter.Options().apply {
             setNumThreads(numThreads)
-            if (CompatibilityList().isDelegateSupportedOnThisDevice) {
-                try {
-                    val gpuOptions = GpuDelegate.Options().apply {
-                        inferencePreference = GpuDelegate.Options.INFERENCE_PREFERENCE_SUSTAINED_SPEED
-                    }
-                    addDelegate(GpuDelegate(gpuOptions))
-                    Log.i(TAG, "GPU Delegate enabled")
-                } catch (e: Exception) {
-                    Log.w(TAG, "GPU Delegate fallback to CPU: ${e.message}")
-                }
-            }
         }
         interpreter = Interpreter(model, options)
 
@@ -59,7 +45,6 @@ class YOLODetector(
     }
 
     fun detect(inputBuffer: ByteBuffer): Array<FloatArray> {
-        val outputSize = numClasses + 5  // bbox(4) + conf(1) + class probs(N)
         val output = Array(1) { FloatArray(interpreter.getOutputTensor(0).shape().let {
             it[1] * it[2]
         })}

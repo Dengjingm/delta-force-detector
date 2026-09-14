@@ -13,6 +13,11 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
+
+        ndk {
+            // 首台验证设备为 arm64（红米 K70）；只打包 arm64-v8a 的 TFLite JNI
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {
@@ -37,10 +42,8 @@ android {
 }
 
 dependencies {
-    // TFLite 推理引擎 + GPU Delegate
+    // TFLite 推理引擎（M1 采用 XNNPACK CPU；GPU delegate 留待 M3 重加）
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
-    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
-    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
 
     // Kotlin 协程
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")

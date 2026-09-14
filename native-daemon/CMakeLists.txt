@@ -15,6 +15,7 @@ add_executable(screen-visiond
 target_link_libraries(screen-visiond
     android
     log
+    dl
 )
 
 target_compile_options(screen-visiond PRIVATE

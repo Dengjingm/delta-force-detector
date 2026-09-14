@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Root 权限执行 shell 命令 -->
-    <uses-permission android:name="android.permission.EXECUTE_COMMANDS" />
+    <!-- 前台服务：检测循环需要持续运行 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <application
         android:name=".VisionApp"
@@ -10,11 +11,23 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
 
-        <!-- 前台 Service → 30fps 检测主循环 -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name=".service.DetectionService"
-            android:foregroundServiceType="mediaProjection"
-            android:exported="false" />
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="screen_vision_detection" />
+        </service>
 
     </application>
 </manifest>
