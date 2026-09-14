@@ -1,257 +1,105 @@
-# Delta Force Screen Vision — 进度文档
+# 建设评估与后续计划
 
-## 一、项目概述
+更新日期：2026-09-14。审查基线：`ab93f11`；本轮只更新文档，没有修复或新增代码实现。完整开发方案已交付，入口为 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)；实施顺序见 [TASKS.md](docs/plan/TASKS.md)，合同与验收分别见 [CONTRACTS](docs/plan/CONTRACTS.md) / [VALIDATION](docs/plan/VALIDATION.md)。
 
-三角洲行动 (Delta Force) **敌方干员视觉检测系统**。在 root 过的 Android 手机上运行，通过 YOLOv8s-P2 以 15fps 检测屏幕中的敌方干员（含极远距离小目标）并返回中心坐标，支持通过 root 权限注入触控事件。
+**结论：模块划分可以保留，但当前仍是未连通的原型脚手架。后续应从“先采集并完整训练，再编译联调”调整为“先建立构建与模型契约基线，数据建设并行；离线验证通过后接入 root 截图，再验收精度和持续性能”。**
 
----
+## 现状、目标与差距
 
-## 二、架构总览（来自 Grill-Me 决策树）
+目标是红米 K70 上的单类 `enemy` 检测，覆盖近距到远距目标，向调用方提供可靠、及时的屏幕中心坐标。当前文件结构覆盖了训练、导出、采集、传输和推理，但关键接口未对齐，也没有训练产物或真机证据。因此主要差距首先是可构建、可运行和可验证，其次才是模型精度与 15fps。
 
-### 2.1 决策树
+| 建设面 | 已存在 | 尚未完成 / 验证 |
+|---|---|---|
+| 文档与导航 | 现状四文档已统一，另有完整主规划、跨端合同、三模块规格、26项任务和验收规格 | 后续实现变化时持续维护 |
+| 数据与训练 | 单类 YAML、训练/可视化脚本 | 数据、标注规则、独立划分、模型加载、训练记录 |
+| 模型导出 | TFLite / fp16 / int8 / NMS 导出入口 | 实际产物、环境锁定、tensor 契约、跨引擎一致性 |
+| Native | 主循环、两种截图代码分支、Socket、构建脚本 | 编译、正确截图、完整写入、可靠断连与退出 |
+| Android | SDK、Service、预处理、推理、后处理、下载骨架 | 编译、启动入口、权限、Binder/Flow、模型加载与生命周期 |
+| 质量与交付 | 可开展静态审查 | 自动化测试、CI、APK、真机功能/精度/性能记录 |
 
-```
-目标类型 ── 三角洲行动 (Delta Force) 敌方干员检测
-               │
-帧率要求 ── 15fps (66ms/帧) — 精度优先
-               │
-权限模型 ── Root（全部能力）
-  ├─ SurfaceFlinger Native 守护进程截图 (minicap 思路, C 实现)
-  ├─ Unix Socket 推帧到 Java 层
-  └─ Root 注入触控事件 (su -c input tap)
-               │
-推理引擎 ── TFLite + GPU Delegate
-  ├─ GPU 可用 → GPU Delegate (最快 ~50ms)
-  └─ GPU 不可用 → XNNPACK CPU 回退
-               │
-模型架构 ── YOLOv8s-P2 (小目标优化)
-  ├─ 输入尺寸: 960×960 LetterBox (2.25x 像素 vs 640)
-  ├─ P2 检测头: 4x 下采样, 160×160 网格 (捕捉极小目标)
-  ├─ 类别: 单类 enemy (全部容量专注干员检测)
-  ├─ 输出: [1, 4+1+numClasses, numDetections]
-  └─ NMS: IoU ≥ 0.5, 置信度 ≥ 0.45
-               │
-训练环境 ── macOS (CPU/MPS)
-               │
-SDK 形态 ── Android 前台 Service
-  ├─ 前台通知保活
-  ├─ Kotlin SharedFlow 异步发射结果
-  └─ 调用方 observe() 订阅
-               │
-模型更新 ── 内置 APK assets + 远端热更新
-```
+“文件存在”“源码审查”“host 验证”“Android 构建”“真机通过”“指标达标”分别记录，不能用“代码层完成”合并这些状态。完整文件定位与调用链见 [CODEMAP.md](CODEMAP.md)。
 
-### 2.2 四层架构
+## 已知问题与优先级
 
-```
-┌─────────────────────────────────────────────────────┐
-│ Layer 4: SDK API                                    │
-│ ScreenVisionSDK                                     │
-│                                                      │
-│   start(context, classNames)   启动检测引擎          │
-│   observe() → Flow<DetectResult>  订阅检测结果       │
-│   tap(x, y)                   Root 触控点击          │
-│   swipe(x1,y1,x2,y2)         Root 触控滑动          │
-│   stop(context)               停止检测               │
-├─────────────────────────────────────────────────────┤
-│ Layer 3: Android Service                            │
-│ DetectionService (前台 Service)                      │
-│                                                      │
-│   15fps 检测主循环:                                   │
-│   ┌─────────┐  ┌──────────┐  ┌───────────┐         │
-│   │ Socket  │→ │ TFLite   │→ │ PostProc  │         │
-│   │ 收帧     │  │ 推理      │  │ NMS+映射   │         │
-│   └─────────┘  └──────────┘  └───────────┘         │
-│        ↓              ↓              ↓               │
-│    ~2ms           ~50ms           ~3ms              │
-│                                                      │
-│   保活: 前台通知 + START_STICKY                       │
-│   协程: Dispatchers.Default + SupervisorJob           │
-├─────────────────────────────────────────────────────┤
-│ Layer 2: Native Daemon (C, root)                    │
-│ screen-visiond                                       │
-│                                                      │
-│   截帧 → 推帧 循环:                                   │
-│   ┌──────────────┐  ┌──────────────────────────┐    │
-│   │ SurfaceFlinger│→ │ Unix Socket Server       │    │
-│   │ Screenshot    │  │ (逐帧 push 到 Java 层)    │    │
-│   └──────────────┘  └──────────────────────────┘    │
-│        ↓                       ↓                     │
-│    ~8ms                    ~2ms                       │
-│                                                      │
-│   通信协议:                                           │
-│   [4bytes: width][4bytes: height][RGBA pixels]       │
-│   Socket: /data/local/tmp/screen-vision.sock          │
-│   保活: 客户端断连自动等待重连                          │
-│   崩溃恢复: Android 层 killall + 重启                  │
-├─────────────────────────────────────────────────────┤
-│ Layer 1: System/Root                                 │
-│                                                      │
-│   su -c /data/local/tmp/screen-visiond &             │
-│   adb push → chmod 755 → launch                      │
-│                                                      │
-│   依赖:                                              │
-│   - Android 10+ (API 28+)                            │
-│   - Root 权限 (Magisk / KernelSU)                    │
-│   - SurfaceFlinger 可访问 (libgui.so)                 │
-│   - GPU Delegate: OpenCL/OpenGL ES 3.1+              │
-└─────────────────────────────────────────────────────┘
-```
+以下优先级是本项目的交付顺序：**P0 为阻断最小闭环，P1 为可靠性与评估必要条件，P2 为基线稳定后的交付能力。** 所有代码问题仍为待修复。
 
-### 2.3 数据流 (15fps, 每帧 ~66ms)
+| 编号 | 优先级 | 代码证据与影响 | 对应动作 / 验收 |
+|---|---|---|---|
+| B01 | P0 | [DetectionService](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt) 使用 `#` 注释、`onBind()` 返回 Flow、普通 suspend 方法中无接收者地使用 `isActive`；[SDK](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt) 的独立 object 内嵌 companion object | 修源码与构建配置；实际 Kotlin 编译、APK assemble 通过 |
+| B02 | P0 | [socket_server.c](native-daemon/socket_server.c) 缺 `chmod` 声明头文件；[main.c](native-daemon/main.c) `%d` 接收 long long；CMake/Android.mk 缺 `dl`；[build.sh](native-daemon/build.sh) 生成带连字符的 Android raw 资源名 | NDK 严格警告构建通过，APK 资源打包通过；固定 ABI/API；拆开纯构建和显式部署 |
+| B03 | P0 | [screencap.c](native-daemon/screencap.c) 默认路径的 `getPixels` 指针从未绑定，C++ 符号/调用方式不正确；fallback 执行 `screencap -p` 却把 PNG 当 raw | 先建立正确的低速截图基线；检查实际 raw/PNG 格式、像素顺序、stride、尺寸及分配；不能只删除 `-p` 或硬猜 raw 头 |
+| B04 | P0 | [export_tflite.py](training/export_tflite.py) `nms=True`；[YOLODetector](android-app/app/src/main/java/com/screen/vision/detection/YOLODetector.kt) 按 `5+nc` 猜类别并用二维数组接三维输出；[PostProcessor](android-app/app/src/main/java/com/screen/vision/detection/PostProcessor.kt) 按交错 raw/objectness 解析 | 固定并检查真实模型契约，匹配输出形状、坐标单位及 NMS；同图跨引擎结果对齐，不能只验证“不崩溃” |
+| B05 | P0 | [SDK](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt) 的 `setResultSource()` 没有调用者，绑定回调只记日志；Service 仅发非空结果 | 接通合法 Binder 与 Flow；验证“有目标→无目标→断流→停止→重启”，不保留旧目标 |
+| B06 | P0 | [Manifest](android-app/app/src/main/AndroidManifest.xml) 未声明必要的前台服务权限，声明 mediaProjection 却没有对应授权流程；无 Activity；[YOLODetector](android-app/app/src/main/java/com/screen/vision/detection/YOLODetector.kt) 在主线程创建 GPU、其他线程推理/关闭 | 明确 root 采集方案适用的 Service 类型和启动流程，检查合并 Manifest；提供最小入口；GPU 同线程生命周期与完整 CPU 回退 |
+| B07 | P1 | [train.py](training/train.py) 依赖未经确认的 `yolov8s-p2.pt`，只检查 YAML；[visualize.py](training/visualize.py) 标签路径多出一层 `images`；[export_tflite.py](training/export_tflite.py) 忽略返回路径，仅扫描权重同级 | 明确 P2 YAML/迁移权重来源、数据预检、正确配对与导出定位；少量样例跑通后再正式训练 |
+| B08 | P1 | [帧发送端](native-daemon/socket_server.c) 忽略 stride，无短写重试与 SIGPIPE 防护；[接收端](android-app/app/src/main/java/com/screen/vision/socket/UnixSocketClient.kt) 漏 width 上限/height 下限，Int 乘法可能溢出 | 固定 LE、紧密 RGBA、安全尺寸计算；覆盖分段读写、半帧断流、慢客户端和对端关闭 |
+| B09 | P1 | [SDK](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt) 提前设 started，缺 daemon 安装/就绪与实例管理，延时绑定任务不取消；[Service](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt) 首次连接失败绕过 cleanup，无重连及 finally | 建立启动/就绪/运行/失败/停止状态；验证快速 start/stop、daemon 迟到/退出、模型加载失败后恢复 |
+| B10 | P1 | [requirements.txt](training/requirements.txt) 仅版本下限；数据划分/测试集缺失；训练目录残留 `hok_detector`；设备只选 MPS/CPU | 记录验证环境、模型/数据版本、实验配置和 seed；按对局划分；统一命名；按需增加 CUDA 配置 |
+| B11 | P1 | 960 固定预处理、每帧多次大分配、30fps 采集与 15fps 消费；协议无采集时间戳；[main.c](native-daemon/main.c) FPS 统计不计等待且有整数乘法溢出风险 | 先测阶段耗时和端到端帧龄；规划时间戳/帧编号和最新帧策略，双端同步升级；基于证据再优化缓存和模型 |
+| B12 | P2 | [ModelUpdater](android-app/app/src/main/java/com/screen/vision/update/ModelUpdater.kt) 使用占位 URL、未校验 md5；SDK 不选缓存；detector 仅支持 assets | 基线阶段不依赖远端更新；后续实现兼容性校验、版本选择、原子切换和回滚再验收 |
 
-```
-┌──────┐   Socket    ┌──────────┐   ByteBuffer   ┌──────────┐
-│ Daemon │───RGBA──→│  Kotlin   │───float32────→│  TFLite  │
-│ (C)    │  ~2ms    │ Service   │  ~3ms preproc  │  GPU Inf │
-└──────┘           └──────────┘                 └──────────┘
-                                                     │ ~50ms
-┌──────┐   List<     ┌──────────┐   float[][]        │
-│  SDK  │←─Result──│ PostProc │←────────────────────┘
-│ Flow  │  ~3ms    │  NMS     │
-└──────┘           └──────────┘
-```
+版本相关证据：Ultralytics 的 [v8.3.200 exporter](https://github.com/ultralytics/ultralytics/blob/v8.3.200/ultralytics/engine/exporter.py) 和 [detection head](https://github.com/ultralytics/ultralytics/blob/v8.3.200/ultralytics/nn/modules/head.py) 展示 raw `4+nc` 与 NMS 输出的区别，以及 TFLite 坐标处理；这是本次核对的具体版本，不代表本仓库已锁定此版本。P2 架构来源参见 [官方 P2 YAML](https://github.com/ultralytics/ultralytics/blob/v8.3.200/ultralytics/cfg/models/v8/yolov8-p2.yaml)。最终仍须检查实际导出产物。
 
-### 2.4 小目标检测策略
+平台依据：[TFLite 2.14 tensor 输出形状检查](https://github.com/tensorflow/tensorflow/blob/v2.14.0/tensorflow/lite/java/src/main/java/org/tensorflow/lite/TensorImpl.java)、[GPU delegate 线程要求](https://developers.google.com/edge/litert/android/gpu)、[Android 前台服务类型](https://developer.android.com/develop/background-work/services/fgs/service-types)、[NDK libdl 链接要求](https://developer.android.com/ndk/guides/stable_apis#c_library)、[AOSP screencap](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/cmds/screencap/screencap.cpp)。设备 ROM 的实际行为仍需真机核实。
 
-敌方干员可能小至 5-10 像素 (远距离)。为此:
+## K70 对方案选择的影响
 
-```
-输入图像 960×960
-    │
-特征金字塔:
-    ├─ P5: 20×20 网格  (32x 下采样) → 大目标
-    ├─ P4: 40×40 网格  (16x 下采样) → 中目标
-    ├─ P3: 80×80 网格  (8x 下采样)  → 小目标
-    └─ P2: 160×160 网格 (4x 下采样) → 极小目标 ★
-```
+用户提供：红米 K70，第二代骁龙 8、最高 3.19GHz、12GB 物理内存 + 4GB 扩展内存、3200×1440 屏幕；root 稍后进行。Android/HyperOS 版本、实际截图和游戏渲染尺寸、root 方案、GPU delegate 支持情况尚未知。
 
-相比标准 YOLOv8nano，P2 头在 4x 下采样 (而非 8x) 检测，每个网格单元仅覆盖 4×4 原始像素，能捕获极小的目标。
+若横屏截图确为 3200×1440，缩到 960×960 LetterBox 时缩放系数为 **0.3**，有效画面约为 **960×432**，上下各填充 264 像素。原图 5–10px 目标因此仅剩约 **1.5–3px**。这解释了为何需要按输入像素大小评估远距召回，不能只靠“P2 + 960”承诺效果。
 
----
+960 输入下，P2/P3/P4/P5 的理论网格为 **240/120/60/30**，P2 步长 4 指模型输入像素，不是原始屏幕像素。旧计划中的 160/80/40/20 对应 640 输入，已纠正。
 
-## 三、已完成工作
+3200×1440 RGBA 原帧约 **18.43MB**；15fps 与 30fps 分别约 **276MB/s**、**553MB/s** 的单向像素负载，尚不含内存复制及中间缓冲。这是容量估算，不是实测传输速度。4GB 扩展内存不能按额外物理 RAM 计入推理预算。
 
-### Phase 0 — 项目脚手架 ✅
+方案保留 YOLOv8s-P2 / 960 作为候选，并与更小 P2 模型、不同输入尺寸作精度/延迟比较。只有全图缩放的远距召回确有瓶颈时，再评估 ROI/切片及其额外延迟；不在首个闭环中同时加入多套复杂方案。
 
-| 文件 | 状态 |
-|------|------|
-| `AGENTS.md` + `CLAUDE.md` symlink | 已完成 |
-| `README.md` | 已完成 |
-| 完整目录结构 | 已完成 |
+## 里程碑与验收
 
-### Phase 1 — 训练管线 (代码层完成, 数据层未开始)
+以验收条件推进，暂不承诺“第几天完成”或 M1/MPS 训练小时数。每个里程碑完成时记录命令、环境、产物、日志/指标与剩余限制。
 
-| 文件 | 功能 | 行数 |
-|------|------|------|
-| `training/train.py` | YOLOv8s-P2 训练入口, 960x960, 150 epochs | ~60 |
-| `training/export_tflite.py` | PyTorch → TFLite 导出 (fp16/int8) | ~45 |
-| `training/visualize.py` | 标注可视化检查 (从 dataset.yaml 动态读取) | ~90 |
-| `training/data/dataset.yaml` | 单类 enemy 定义 | 16 |
+| 里程碑 | 依赖与工作 | 验收条件 | 当前状态 |
+|---|---|---|---|
+| M0 完整规划 | 现状、目标架构、合同、模块规格、任务与验收 | 11份文档区分现状与未来；26项核心任务有依赖/产物/门槛，未知有固定解决路线 | 本轮完成，仅文档 |
+| M1 可复现构建 | 修 B01/B02/B06 的构建与启动项；固定 JDK/Gradle/SDK/NDK，补 Wrapper、最小入口、构建检查；分离 build/deploy | NDK arm64 产物和 debug APK 实际构建通过；APK 可启动；缺模型/未 root 时清晰反馈；不把“安装成功”当作检测成功 | 待实施；不依赖 root |
+| M2 数据规则与模型契约 | 可与 M1 并行；修 B07/B10，确定 P2 来源、依赖、标注规则、划分、导出检查和元数据 | 数据预检可区分缺标/空标/非法标注；无对局泄漏；模型可加载；实际导出文件及 tensor 契约可追溯 | 待实施；不依赖 root |
+| M3 离线正确性与推理基准 | 依赖 M1/M2；先少量可靠样例训练/导出与 CPU 基线，再修 B04 和 GPU 生命周期 | 同组标注截图比较 PyTorch/TFLite/Android 的框、分数、中心坐标；记录误差与失败样例；K70 本地图片可推理，验证 GPU 及 CPU 回退并记录延迟 | 待实施；K70 此阶段无需 root |
+| M4 root 截图与 SDK 闭环 | 依赖 M1/M3 和设备 root；修 B03/B05/B08/B09，先低频正确截图，再接模型 | 截图像素/方向/尺寸正确；SDK 实际收到结果；有目标→空帧→断流→恢复；重复 start/stop 可退出、可重启，无过期结果 | 待设备条件与代码修复 |
+| M5 精度与持续性能 | 数据采集从 M2 开始持续；离线精度可在 M3 后推进；整链路验收依赖 M4；修 B11 | 固定测试集分桶指标；真机持续至少 30 分钟记录 p50/p95、帧龄、有效 FPS、内存/温升/丢帧；测后决定是否达到 15fps 或调整方案 | 待基线数据与真机证据 |
+| M6 更新与交付 | 依赖稳定 M3–M5 基线；修 B12，按实际需要提供 AAR/演示 APK、发布记录与其他机型矩阵 | 正确模型切换生效；中断/哈希错误/不兼容/加载失败保留旧版；安装升级可复现；扩展设备逐台记录兼容结果 | 后置 |
 
-### Phase 2 — Native 守护进程 (代码层完成, 未编译)
+依赖关系：`M0 → (M1 ∥ M2) → M3 → M4 → M5 → M6`。采集、补标和离线评估贯穿 M2–M5。M1 的设备安装和 M3 的本地图片推理不依赖 root；M4 的真实游戏采集必须等待 root 条件就绪。首阶段采用人工部署与内置模型可以先完成闭环，自动解包安装与热更新分别验收。
 
-| 文件 | 功能 | 行数 |
-|------|------|------|
-| `native-daemon/main.c` | 30fps 主循环 + 帧率统计 + 断连重连 | ~160 |
-| `native-daemon/screencap.c` | SurfaceFlinger dlopen 方案 + screencap 回退 | ~170 |
-| `native-daemon/socket_server.c` | Unix Socket Server, writev 零拷贝 | ~120 |
-| `native-daemon/CMakeLists.txt` | CMake arm64 构建配置 | ~25 |
-| `native-daemon/Android.mk` | NDK 备选构建 | ~12 |
-| `native-daemon/build.sh` | 一键编译 + adb 推送 | ~40 |
+## 数据和精度计划的补充
 
-### Phase 3 — Android Service (代码层完成, 未编译)
+1. **先固定标注语义。** 明确敌我判断依据、可见框与遮挡框范围、倒地/尸体、队友、标记图标、训练靶和无法判断小点的处理；可靠可见敌人全部标注，不因尺寸小而漏标，不凭猜测补框。
+2. **建立可复核样本清单。** 记录对局/片段 ID、地图、距离或原图框尺寸、运动/光照、敌人数及不确定项；加入空场景、队友、植被、建筑等困难负样本。修复可视化配对后再抽查小框。
+3. **按对局分组划分。** 建议先采用约 70/15/15 的 train/val/test 分配，样本不足时按独立对局数调整；冻结测试集。随机数据增强仅用于训练，验证/测试和部署使用一致的确定性预处理；近邻帧不能跨集合。200 张是采集起点，1000+ 由错误样例覆盖驱动。
+4. **建立可比较实验。** 保存 seed、依赖环境、数据版本、模型结构/权重来源、输入尺寸、batch、阈值、训练配置与导出参数。先 smoke run，再完整训练；训练脚本需明确 CUDA/MPS/CPU 的选择与内存条件。
+5. **单独评估远距目标。** 同时保存原图框尺寸和 LetterBox 后尺寸；建议按输入短边 `<4px`、`4–8px`、`8–16px`、`≥16px` 分桶。报告各桶样本数、precision/recall、每帧误检、中心误差和全量 mAP；空帧另报误检，不用全量 mAP 掩盖小目标漏检。
+6. **冻结操作阈值和容差后验收。** 当前 `confidence=0.45`、`IoU=0.5` 只是代码默认；用验证集选择，再在独立测试集报告。模型导出误差、样本覆盖、各桶召回与误检门槛已在VALIDATION定稿为v1设计目标；不是实测结果。任何调整必须记录依据并同步规划，不能通过降标准伪装验收通过。
+7. **量化后置比较。** 默认 fp16 建立 PyTorch→TFLite→Android 对照；int8 需要代表性校准集、实际 I/O 检查和远距召回对比，再决定是否采用。
 
-| 文件 | 功能 | 行数 |
-|------|------|------|
-| `api/ScreenVisionSDK.kt` | SDK 唯一入口 (start/observe/tap/stop) | ~120 |
-| `service/DetectionService.kt` | 前台 Service, 15fps 检测循环 | ~155 |
-| `detection/YOLODetector.kt` | TFLite + GPU Delegate, 自动推导 numClasses | ~80 |
-| `detection/Preprocessor.kt` | Bitmap → 960×960 LetterBox → normalized float32 | ~70 |
-| `detection/PostProcessor.kt` | NMS + 模型→原始坐标映射 | ~115 |
-| `socket/UnixSocketClient.kt` | LocalSocket AF_UNIX 连接守护进程 | ~80 |
-| `update/ModelUpdater.kt` | 远端模型检测 + 下载替换 | ~115 |
-| `model/DetectResult.kt` | 数据类 (elementId, x, y, confidence) | ~17 |
-| `VisionApp.kt` | Application 入口 | ~15 |
-| `AndroidManifest.xml` | 前台 Service 声明 + 权限 | ~17 |
-| `build.gradle.kts` | TFLite + GPU Delegate + Coroutines 依赖 | ~50 |
+## 真机与性能验收记录要求
 
----
+- **设备记录**：K70 的 Android/ROM、root 方式、ABI、实际帧尺寸/方向、游戏图形设置、模型/数据/应用/daemon 版本、推理后端。
+- **正确性与恢复**：色块/边角/行 padding、横竖屏、无目标、半帧断流、daemon 异常退出、慢消费者、锁屏/切换应用、启动失败、重复启停及资源释放。
+- **测量口径**：区分采集 FPS、推理 FPS、有效结果 FPS；记录采集到结果的帧龄，而非只测 `Interpreter.run()`；p50/p95 覆盖采集、传输、预处理、推理、后处理，并另报端到端结果。
+- **持续运行**：至少 30 分钟且覆盖游戏并行运行，比较开始与后段吞吐、帧龄、内存与温升。15fps 对应 66.7ms 周期；“持续 15fps”只有在有效结果速率接近目标、无持续积压且报告运行条件后才可声称。正式REALTIME门槛已在VALIDATION固定：窗口有效FPS≥14.5、帧龄p95≤150ms/p99≤250ms，并同时通过全距离精度要求。
+- **结果可追溯**：保留测试输入、模型元数据、输出和日志。性能证据不足时继续标注“待验证”，不能用硬件规格替代结果。
 
-## 四、后续待建设
+现有帧头没有采集时间戳或 frameId，M5 前需要选择可对照的测量方案；若升级协议，应统一版本、长度、格式和时间基准并同步双端。先证实是否积压，再实现有界缓冲/最新帧策略和内存复用。
 
-### Phase 1 — 数据采集与训练 (第 1-3 天)
+## 本轮验证记录与边界
 
-| 任务 | 说明 | 预估 |
-|------|------|------|
-| 截取三角洲行动局内截图 | 不同地图/模式/距离, 200-500 张, **优先远距小目标** | 2h |
-| 用 LabelImg 标注敌方干员 | 标注 ALL 可见的敌方干员, **含极小目标** | 4-6h |
-| 运行 `python train.py` | YOLOv8s-P2, 960x960, 150 epochs. M1 MPS ~1h, CPU ~3h | 1-3h |
-| 导出 TFLite 并放入 assets | `export_tflite.py` → `android-app/app/src/main/assets/model.tflite` | 10min |
-| 训练数据检查与补标 | `visualize.py` 检查, 补漏标/误标 | 1h |
+| 检查 | 结果 | 可支持的结论 |
+|---|---|---|
+| 目录、Git 状态、三个模块源码与配置审查 | 已完成 | 上述现状和调用链来自仓库实际内容 |
+| 3 个 Python 脚本 AST 解析 | 通过 | Python 语法可解析，不代表数据加载/训练/导出成功 |
+| `bash -n native-daemon/build.sh` | 通过 | Shell 语法正确，不代表 NDK 构建通过 |
+| macOS clang + 临时 Android log 声明、C11/严格警告 | 复现 `chmod` 未声明及 FPS printf 类型错误 | 证实 host 侧静态编译问题；不是 Android 交叉编译 |
+| 临时 socketpair 探针，调用当前帧发送函数后关闭接收端 | 发送进程被 SIGPIPE 终止 | 证实当前重连分支无法覆盖此断连情形 |
+| 本机工具与依赖探测 | 无可用 Gradle/Kotlin/CMake/adb/NDK、无 Java Runtime；无 torch/ultralytics/tensorflow | 未安装开发环境，未运行训练/导出、APK 构建或真机测试 |
+| 文档路径、链接、状态与差异检查 | 11份Markdown的文件链接、标题锚点、JSON样例、代码围栏、26项任务依赖无环及 `git diff --check` 通过 | 变更仅限Markdown规划文档，CLAUDE符号链接保留；源码问题仍待修复 |
 
-### Phase 2 — 编译 Native 守护进程 (第 3-5 天)
-
-| 任务 | 说明 | 预估 |
-|------|------|------|
-| 安装 Android NDK r26+ | 通过 Android Studio SDK Manager | 30min |
-| 编译 `screen-visiond` | `cd native-daemon && ./build.sh` | 10min |
-| adb 推送 + root 启动 | `adb push && adb shell su -c ...` | 5min |
-| 验证截图 + Socket 通信 | 看 logcat `sv-main` `sv-socket` | 30min |
-
-### Phase 3 — 编译 Android App (第 5-6 天)
-
-| 任务 | 说明 | 预估 |
-|------|------|------|
-| Android Studio 打开 android-app/ | 等待 Gradle sync + 下载依赖 | 10min |
-| 编译 debug APK | 确保 tflite + gpu 依赖正确 | 10min |
-| 安装到设备 + 授权前台通知 | `adb install` | 5min |
-| 验证 15fps 检测循环 | logcat `DetectionService` 检查帧率 | 30min |
-
-### Phase 4 — 集成联调 (第 6-8 天)
-
-| 任务 | 说明 | 预估 |
-|------|------|------|
-| 端到端跑通: 守护进程→Socket→推理→结果 | 全链路验证 | 2h |
-| 模型精度调优: 收集 bad case → 增量标注 → 继续训练 | 迭代优化 | 持续 |
-| 不同手机上兼容性测试 | 不同 SoC / Android 版本 | 持续 |
-| GPU Delegate 回退测试 | 在不支持 GPU 的设备上验证 CPU 推理 | 1h |
-
-### Phase 5 — 模型热更新 (第 8-10 天)
-
-| 任务 | 说明 | 预估 |
-|------|------|------|
-| 搭建模型更新 API 服务 | 任意 HTTP 服务器, 返回 `{version, url, md5}` | 2h |
-| 集成 `ModelUpdater.checkAndUpdate()` | SDK 启动时异步调用 | 30min |
-| 游戏版本适配流程 | 大版本更新 UI → 标注 → 推送新模型 | 持续 |
-
----
-
-## 五、已知风险
-
-| 风险 | 影响 | 缓解措施 |
-|------|------|----------|
-| SurfaceFlinger API 随 Android 版本变化 | 截图失败 | screencap.c 内置 fallback 方案 (`screencap -p` 命令) |
-| GPU Delegate 部分机型不支持 | 掉帧到 5-8fps | 自动回退 XNNPACK CPU |
-| YOLOv8s-P2 960x960 推理超 50ms | 不到 15fps | 退而用 640x640, 或换 YOLOv8n-P2 |
-| 游戏大版本更新 UI/角色模型 | 检测失效 | ModelUpdater 热更新机制 |
-| Root 权限非普遍可用 | 无法启动守护进程 | 项目定位即为 Root 方案, 不妥协 |
-| 远距小目标误检/漏检 | 精度不达标 | 增量采集远距样本 + 针对性标注训练 |
-| 游戏截图可能触发安全检测 | 账号封禁风险 | **用户自行承担风险, 项目仅提供技术方案** |
-
----
-
-## 六、文件统计
-
-```
-总计 28 个文件
-├─ 训练管线:    5 文件  (~210 行)
-├─ Native 守护:  8 文件  (~530 行)
-├─ Android SDK:  12 文件 (~830 行)
-└─ 项目文档:    3 文件  (~370 行)
-```
-
----
-
-*最后更新: 2026-09-11*
-*状态: 脚手架完成, 等待 Phase 1 数据采集与训练*
+本轮没有生成数据、模型、APK 或 daemon 产物，没有连接/改动手机，也没有执行代码实现。下一次开发可直接从TASKS的T01/T03/T07三条独立任务开始；用户暂不需要为当前文档工作补充 root 或 Android 版本。
