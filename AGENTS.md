@@ -18,7 +18,7 @@ Delta Force（三角洲行动）敌方干员视觉检测原型。在 root Androi
 ## 当前基线与首台设备
 
 - 当前是未完成集成的脚手架。训练、Native、Android 的主要文件存在，但没有端到端验收记录；已发现的编译和接口问题见 PROGRESS。
-- 仓库没有训练截图、标注、训练权重、TFLite 资产、Gradle Wrapper、自动化测试或 CI。不要将预期目录、下载缓存或构建产物写成已经存在。
+- `training/data/incoming/` 中已有从 Roboflow 下载的隔离候选数据，但原始类别为 `head` / `person`，尚未按本项目 `enemy` 语义复核，也没有来源对局分组证据；不能直接作为正式训练集。仓库仍没有批准的单类训练数据、训练权重、TFLite 资产、自动化测试或 CI；Gradle Wrapper 与 M1 构建入口已经落地。
 - 用户指定首台验证设备：**红米 K70、第二代骁龙 8、最高 3.19GHz、12GB 内存 + 4GB 扩展内存、3200×1440 屏幕**。这些是用户提供的信息，未做真机核验。
 - 用户计划稍后 root。Android 版本、HyperOS/ROM 版本、root 方案、实际游戏渲染/截图分辨率仍待记录；不能假定已 root、adb 已连接或 SurfaceFlinger/GPU 兼容。
 - 构建配置 `minSdk=28` 对应 Android 9，`targetSdk=34`；这只是配置，不是 API 28+ 全版本兼容证明。扩展内存不等同于额外物理 RAM，也不构成性能保证。

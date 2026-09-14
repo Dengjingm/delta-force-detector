@@ -4,7 +4,7 @@
 
 ## 1. 范围与入口
 
-目标是 root Android 上的单类 `enemy` 检测，训练候选为 YOLOv8s-P2 / 960 输入，检测目标为 15fps。当前没有训练数据、权重、TFLite 资产或端到端运行记录。
+目标是 root Android 上的单类 `enemy` 检测，训练候选为 YOLOv8s-P2 / 960 输入，检测目标为 15fps。当前只有隔离的 Roboflow `head` / `person` 候选数据，尚无批准的单类训练数据、权重、TFLite 资产或端到端运行记录。
 
 | 要处理的任务 | 首先阅读 | 同步检查 |
 |---|---|---|
@@ -39,7 +39,10 @@
 │   ├── export_tflite.py              导出入口 export_tflite()
 │   ├── visualize.py                  标注显示与坐标反归一化
 │   ├── requirements.txt              Python 依赖下限，未锁定环境
-│   └── data/dataset.yaml             nc=1, names={0: enemy}
+│   └── data/
+│       ├── dataset.yaml              nc=1, names={0: enemy}
+│       └── incoming/roboflow-hello-n-delta-force-wtowy-gq2n9-v1-yolov8/
+│                                      已忽略的候选 ZIP 与原样解压数据；head/person，待复核
 ├── native-daemon/
 │   ├── main.c                        进程入口、30fps 目标循环、信号与统计
 │   ├── screencap.c / screencap.h      截图后端与 FrameBuffer
@@ -73,14 +76,14 @@
                 └── model/DetectResult.kt        elementId / x / y / confidence
 ```
 
-Gradle Wrapper（8.7）与 `MainActivity` 诊断入口已落地，debug APK 可构建（M1）；仍无独立 library/AAR 模块、测试目录或 CI。APK 中没有 `assets/model.tflite`。训练数据的 `images/{train,val}`、`labels/{train,val}` 也尚未建立。
+Gradle Wrapper（8.7）与 `MainActivity` 诊断入口已落地，debug APK 可构建（M1）；仍无独立 library/AAR 模块、测试目录或 CI。APK 中没有 `assets/model.tflite`。正式训练目录 `images/{train,val,test}`、`labels/{train,val,test}` 也尚未建立；`incoming/` 候选数据未接入 `dataset.yaml`。
 
 ## 3. 调用链与断点
 
 ### 3.1 离线训练到模型资产
 
 ```text
-截图与 YOLO 标注（缺失）
+经 `enemy` 语义复核并按来源分组的 YOLO 标注（缺失；incoming 候选不可直接替代）
   → dataset.yaml
   → train.py:train()
       YOLO("yolov8s-p2.pt")                ← 来源/可加载性待验证

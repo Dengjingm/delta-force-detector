@@ -1,6 +1,7 @@
 # Training
 training/__pycache__/
 training/runs/
+training/data/incoming/
 training/data/images/train/*.jpg
 training/data/images/train/*.png
 training/data/images/val/

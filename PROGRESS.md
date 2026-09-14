@@ -1,6 +1,6 @@
 # 建设评估与后续计划
 
-更新日期：2026-09-14。审查基线：`ab93f11`；本轮完成 T07/T08（v2 帧协议黄金 fixture 与 C 端编解码 `frame_protocol.c/.h` + host 测试，尚未接入 socket 传输）与 M1 可复现构建（修 B01/B02/B06，生成 Gradle Wrapper 与 MainActivity 诊断入口，NDK arm64 交叉编译通过，debug APK assemble 成功）。完整开发方案入口为 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)；实施顺序见 [TASKS.md](docs/plan/TASKS.md)，合同与验收分别见 [CONTRACTS](docs/plan/CONTRACTS.md) / [VALIDATION](docs/plan/VALIDATION.md)。
+更新日期：2026-09-14。审查基线：`ab93f11`；当前已完成 T07/T08 的 v2 帧协议黄金 fixture 与 C 端编解码 host 测试、M1 可复现构建，并下载和隔离检查 Roboflow 候选数据。v2 尚未接入 socket 传输，候选数据尚未接入单类训练。完整开发方案入口为 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)；实施顺序见 [TASKS.md](docs/plan/TASKS.md)，合同与验收分别见 [CONTRACTS](docs/plan/CONTRACTS.md) / [VALIDATION](docs/plan/VALIDATION.md)。
 
 **结论：模块划分可以保留，但当前仍是未连通的原型脚手架。后续应从“先采集并完整训练，再编译联调”调整为“先建立构建与模型契约基线，数据建设并行；离线验证通过后接入 root 截图，再验收精度和持续性能”。**
 
@@ -11,7 +11,7 @@
 | 建设面 | 已存在 | 尚未完成 / 验证 |
 |---|---|---|
 | 文档与导航 | 现状四文档已统一，另有完整主规划、跨端合同、三模块规格、26项任务和验收规格 | 后续实现变化时持续维护 |
-| 数据与训练 | 单类 YAML、训练/可视化脚本 | 数据、标注规则、独立划分、模型加载、训练记录 |
+| 数据与训练 | 单类 YAML、训练/可视化脚本；隔离的 Roboflow v1 候选数据 | 候选数据的 `enemy` 语义复核、来源分组与独立划分；模型加载、训练记录 |
 | 模型导出 | TFLite / fp16 / int8 / NMS 导出入口 | 实际产物、环境锁定、tensor 契约、跨引擎一致性 |
 | Native | 主循环、两种截图代码分支、Socket、构建脚本 | 编译、正确截图、完整写入、可靠断连与退出 |
 | Android | SDK、Service、预处理、推理、后处理、下载骨架 | 编译、启动入口、权限、Binder/Flow、模型加载与生命周期 |
@@ -48,7 +48,7 @@
 | N2 | ~~[DetectionService.kt](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt) `:61`、`:71` 返回 `START_STICKY`~~ | ~~与 ANDROID §4 要求的 `START_NOT_STICKY` 相反~~ | ✅ 已修：两处均改 `START_NOT_STICKY`，随 M1 构建通过 |
 | N3 | [main.c](native-daemon/main.c) `:46,58,94,104,129` 计时用 `CLOCK_MONOTONIC` | 与 C05/NATIVE §4 要求的 `CLOCK_BOOTTIME` 不符，禁止与 Android 跨进程相减 | T14（关联 B11） |
 | N4 | [requirements.txt](training/requirements.txt) 同时含 torch/ultralytics/tensorflow | 与 TRAINING §5「训练与导出环境分离」矛盾，训练环境不应含 TensorFlow | T01/T05/T06（关联 B10） |
-| N5 | [.gitignore](.gitignore) 忽略 `images/val`/`labels/val`，漏 `test/incoming/review/manifests` | 未覆盖规划数据布局 | T03/T04（关联 B10） |
+| N5 | [.gitignore](.gitignore) 已覆盖 `incoming` 和现有 `val` 数据，仍漏规划中的 `test/review/manifests` 数据策略 | 尚未完整覆盖规划数据布局 | T03/T04（关联 B10） |
 | N6 | [dataset.yaml](training/data/dataset.yaml) 仅有 `train`/`val` | 缺 `test` 划分，与 TRAINING §2 的 70/15/15 不符 | T03（关联 B10） |
 
 版本相关证据：Ultralytics 的 [v8.3.200 exporter](https://github.com/ultralytics/ultralytics/blob/v8.3.200/ultralytics/engine/exporter.py) 和 [detection head](https://github.com/ultralytics/ultralytics/blob/v8.3.200/ultralytics/nn/modules/head.py) 展示 raw `4+nc` 与 NMS 输出的区别，以及 TFLite 坐标处理；这是本次核对的具体版本，不代表本仓库已锁定此版本。P2 架构来源参见 [官方 P2 YAML](https://github.com/ultralytics/ultralytics/blob/v8.3.200/ultralytics/cfg/models/v8/yolov8-p2.yaml)。最终仍须检查实际导出产物。
@@ -73,7 +73,7 @@
 
 | 里程碑 | 依赖与工作 | 验收条件 | 当前状态 |
 |---|---|---|---|
-| M0 完整规划 | 现状、目标架构、合同、模块规格、任务与验收 | 11份文档区分现状与未来；26项核心任务有依赖/产物/门槛，未知有固定解决路线 | 本轮完成，仅文档 |
+| M0 完整规划 | 现状、目标架构、合同、模块规格、任务与验收 | 11份文档区分现状与未来；26项核心任务有依赖/产物/门槛，未知有固定解决路线 | 已完成（规划文档） |
 | M1 可复现构建 | 修 B01/B02/B06 的构建与启动项；固定 JDK/Gradle/SDK/NDK，补 Wrapper、最小入口、构建检查；分离 build/deploy | NDK arm64 产物和 debug APK 实际构建通过；APK 可启动；缺模型/未 root 时清晰反馈；不把“安装成功”当作检测成功 | 构建部分完成（NDK arm64 + debug APK 通过）；安装/启动与缺模型/未 root 反馈待真机验证；不依赖 root |
 | M2 数据规则与模型契约 | 可与 M1 并行；修 B07/B10，确定 P2 来源、依赖、标注规则、划分、导出检查和元数据 | 数据预检可区分缺标/空标/非法标注；无对局泄漏；模型可加载；实际导出文件及 tensor 契约可追溯 | 待实施；不依赖 root |
 | M3 离线正确性与推理基准 | 依赖 M1/M2；先少量可靠样例训练/导出与 CPU 基线，再修 B04 和 GPU 生命周期 | 同组标注截图比较 PyTorch/TFLite/Android 的框、分数、中心坐标；记录误差与失败样例；K70 本地图片可推理，验证 GPU 及 CPU 回退并记录延迟 | 待实施；K70 此阶段无需 root |
@@ -113,12 +113,18 @@
 | macOS clang + 临时 Android log 声明、C11/严格警告 | 复现 `chmod` 未声明及 FPS printf 类型错误 | 证实 host 侧静态编译问题；不是 Android 交叉编译 |
 | 临时 socketpair 探针，调用当前帧发送函数后关闭接收端 | 发送进程被 SIGPIPE 终止 | 证实当前重连分支无法覆盖此断连情形 |
 | 本机工具与依赖探测 | 有 gcc 12.3 / clang 17.0 / CMake 3.26 / make 4.4 / Python 3.11；已装 JDK 17.0.20.1、Gradle 8.7、Android SDK(platform-34/build-tools 34.0.0/platform-tools adb 37.0.1)、NDK r26d，位于 `/data/home/jingmindeng/android/`；训练 venv `/data/home/jingmindeng/android/venv-training` | C host 与 arm64 交叉编译均可；`gradle -p android-app projects` 配置通过，Android 构建工具链就绪；训练/导出 Python 依赖（CPU）已装并 import 验证通过 |
-| 文档路径、链接、状态与差异检查 | 11份Markdown的文件链接、标题锚点、JSON样例、代码围栏、26项任务依赖无环及 `git diff --check` 通过 | 变更仅限Markdown规划文档，CLAUDE符号链接保留；源码问题仍待修复 |
 | T07 黄金 fixture 生成 | `generate_fixtures.py` 逐字段 struct 打包与独立手写 hex 断言一致，产出 72 字节 `frame_v2_rg_2x1.bin`，SHA-256=`1e1a57f8…73fe`，写入 `manifest.json`/README | 帧协议 golden 基准已落地；长度/hash/字段期待值独立可复核 |
 | T08-C v2 编解码 host 测试 | `frame_protocol.c/.h` 以 gcc C11 `-Wall -Wextra -Werror` 编译，`test_frame_protocol.c` 全绿：golden 逐字节往返、错 magic/version/headerBytes、越界尺寸/stride/format/rotation/payload/时间顺序/零 ID 均正确拒绝，UBSan 无未定义行为 | C 端 v2 编解码与校验已 host 验证；`socket_server.c` 仍为 v1、Kotlin 端未实现，接入属 T14/T08-Kotlin |
 | Python 训练依赖（CPU） | venv `venv-training` 内 torch 2.14.0+cpu / torchvision 0.29.0+cpu / ultralytics 8.4.150 / tensorflow 2.21.0 / opencv-python-headless 4.11.0.86 / numpy 1.26.4 / pillow 12.3.0 / matplotlib 3.11.2 / pyyaml 6.0.3 / tqdm 4.70.1，全部 import 通过；labelimg 未装（仅 GUI）；torch 无 CUDA | CPU 训练/导出依赖就绪，尚未跑通训练或导出；numpy 锁 1.26.4 以兼容 TF，opencv 用 headless 版规避无头机缺 libGL |
 | M1 构建（NDK + Android） | `build.sh` 用 NDK r26d 交叉编译 arm64 `screen-visiond`（32K）→ `res/raw/screen_visiond`；Gradle 8.7 + JDK 17 生成 Wrapper；`assembleDebug` 产出 `app-debug.apk`（arm64-only，约 9.3M） | M1 构建闭环已通；不代表可安装/检测；GPU delegate 已移除改 XNNPACK CPU，待 M3 重加 |
+| Roboflow `hello-n/delta-force-wtowy-gq2n9` v1 YOLOv8 下载 | ZIP 776,596,590 bytes；SHA-256 `e9413acedd9d789ee0f7e15412126af27cd32ef7e3bda0770f08b090c0d5f634`；ZIP CRC 通过；归档中的 3 个 `data.yaml` 条目内容相同 | 已取得可追溯的隔离候选数据，并以 GitHub Release `dataset-roboflow-v1` 分发；不代表符合 `enemy` 语义 |
+| 候选数据结构与标签静态检查 | train/valid/test 为 1246/357/180 张，图片与标签一一配对；3272 个框均为合法五列 YOLO 坐标；类别计数 `head=1227`、`person=2045` | 原始图像与标注文件配对完整；没有缺标、孤儿标签或非法坐标行 |
+| 候选 `data.yaml` 路径检查 | 导出文件写入 `../train/images`、`../valid/images`、`../test/images`，按 YAML 所在目录解析均不存在 | 保留原文件作为来源证据；正式接入时须生成项目自己的配置，不能直接使用该 YAML |
+| 候选图片解码、尺寸和精确重复检查 | 1783 张 JPEG 全部由 `djpeg` 解码通过；1782 张为 3840×2160，1 张为 3840×2100；无相同 SHA-256 图片及跨 split 精确重复 | 文件未见损坏或字节级重复；不能排除近邻帧泄漏 |
+| 文档路径、链接、状态与差异检查 | 11份Markdown的文件链接、标题锚点、JSON样例、代码围栏、26项任务依赖无环及 `git diff --check` 通过 | 本次提交候选数据忽略规则并同步状态文档；CLAUDE 符号链接保留，源码问题仍待修复 |
 
-本轮新增源码：`contracts/fixtures/`（生成器+bin+manifest+README）、`native-daemon/frame_protocol.{c,h}`、`native-daemon/tests/test_frame_protocol.c`；M1 另增 `android-app/gradlew` + `gradle/wrapper/`、`MainActivity.kt`、`res/raw/screen_visiond`（arm64 二进制）。已产出 `native-daemon/build/screen-visiond` 与 `android-app/app/build/outputs/apk/debug/app-debug.apk`；未生成数据、模型或真机记录；ASan 因本机缺 `libclang_rt.asan` 运行库未跑（UBSan 已跑）。
+候选数据位于被 Git 忽略的 `training/data/incoming/roboflow-hello-n-delta-force-wtowy-gq2n9-v1-yolov8/`，保留原 ZIP 和原样解压内容。它的标签是 `head` / `person`，所有图片均有正框，缺少已确认空帧；来源对局分组未知，原 70/20/10 划分不能作为无泄漏证据。在完成敌我语义复核、困难负样本补充和按对局重划分前，不接入单类 `dataset.yaml`，B07/B10 与 M2 保持未完成。
 
-下一批可继续独立任务：T03（数据语义与清单，纯文档/脚本）与 T08 的 Kotlin 端 `FrameHeader.kt` 编译验证；`socket_server.c` 接入 v2 属 T14。M1 构建已闭环（debug APK + arm64 交叉编译），真机安装/启动与缺模型/未 root 反馈待 root 与设备条件。训练/导出依赖已装 CPU 版（venv-training），可开始 smoke run，但尚无训练数据/权重，不能声称训练或导出成功。用户暂无需补充 root 或 Android 版本。
+本轮新增源码：`contracts/fixtures/`（生成器+bin+manifest+README）、`native-daemon/frame_protocol.{c,h}`、`native-daemon/tests/test_frame_protocol.c`；M1 另增 `android-app/gradlew` + `gradle/wrapper/`、`MainActivity.kt`、`res/raw/screen_visiond`（arm64 二进制）。已产出 `native-daemon/build/screen-visiond` 与 `android-app/app/build/outputs/apk/debug/app-debug.apk`；未生成训练权重、模型或真机记录；ASan 因本机缺 `libclang_rt.asan` 运行库未跑（UBSan 已跑）。
+
+下一批可继续 T03（以候选数据为输入落实数据语义、清单与复核流程）及 T08 的 Kotlin 端 `FrameHeader.kt` 编译验证；`socket_server.c` 接入 v2 属 T14。M1 构建已闭环，真机安装/启动与缺模型/未 root 反馈待设备验证。训练/导出 CPU 环境已就绪，但候选数据尚不符合单类 `enemy` 契约，不能声称训练或导出成功。
