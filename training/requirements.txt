@@ -1,4 +1,4 @@
-# Delta Force 训练/导出依赖（CPU 版，已锁定精确版本）
+# YOLO 研究 训练/导出依赖（CPU 版，已锁定精确版本）
 # 验证环境：Linux x86_64 + Python 3.11，本仓库 venv-training 已跑通 import。
 #
 # torch/torchvision 为官方 CPU wheel（无 CUDA），版本带 +cpu 后缀，

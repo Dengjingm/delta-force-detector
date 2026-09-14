@@ -1,6 +1,6 @@
 # 完整实施规划 v1.0
 
-规划日期：2026-09-14。对象：红米 K70 上的三角洲行动单类敌方干员检测。**本文及配套规格全部是待开发设计；本轮仅编写文档，未修改源码、构建、训练或部署。**
+规划日期：2026-09-14。对象：红米 K70 上的 YOLO 单类 `enemy` 检测研究。**本文及配套规格全部是待开发设计；本轮仅编写文档，未修改源码、构建、训练或部署。**
 
 本计划决定开发时采用的默认方案、跨端接口、失败处理和交付门槛。实现按任务卡逐项进行，不再由开发者从缺陷清单重新推导方案。设备或模型相关结论必须由指定验证任务得出；每个未知项都给出探测方法、分支和产物。
 
@@ -33,7 +33,7 @@
 5. 安装、启停、模型选择、显式模型更新、兼容性检查、原子切换和失败回滚流程。
 6. 固定独立测试集的精度报告、K70 持续运行报告、版本清单及可复现交付包。
 
-检测循环只产生观察结果。现有 `tap`/`swipe` 作为调用方显式使用的独立接口保留，不接入自动开火、瞄准、跟踪或自动操作策略。稳定目标 ID、多类别、无 root 实时采集、远端推理、全机型覆盖不属于 v1 必交范围。
+检测循环产生观察结果。现有 `tap`/`swipe` 作为调用方显式使用的独立接口保留。可选的屏幕中心移动由 `moveCenter` 开启，将屏幕中心朝最近检测目标移动。稳定目标 ID、多类别、无 root 实时采集、远端推理、全机型覆盖不属于 v1 必交范围。
 
 区分两个完成层级：
 
@@ -79,7 +79,7 @@ training/
   data/README.md / data/manifests/<datasetVersion>/split-report.md
   validate_dataset.py / split_dataset.py / model_contract.py
   train.py / export_tflite.py / visualize.py / evaluate.py
-  tests/ / requirements-{train,export}.lock / runs/delta_enemy/<run-id>/
+  tests/ / requirements-{train,export}.lock / runs/yolo_research/<run-id>/
 native-daemon/
   main.c / screencap.c,h / socket_server.c,h
   frame_protocol.c,h / capture_raw.c,h / capture_backend.h

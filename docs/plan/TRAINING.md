@@ -6,19 +6,19 @@
 
 ## 1. 标注语义：初版直接采用的规则
 
-检测对象是当前画面中能够可靠确认的敌方干员身体。框采用**可见部分的紧致外接矩形**，不推测遮挡后的全身；框坐标是原始截图连续像素边界，右下边界可等于图片宽高。写入 YOLO 时转换成 `0 cx cy w h`，归一化到 0–1。
+检测对象是当前画面中能够可靠确认的 `enemy` 目标可见身体。框采用**可见部分的紧致外接矩形**，不推测遮挡后的全身；框坐标是原始截图连续像素边界，右下边界可等于图片宽高。写入 YOLO 时转换成 `0 cx cy w h`，归一化到 0–1。
 
 | 场景 | 初版规则 | 复核要求 |
 |---|---|---|
-| 正常站立、移动、蹲伏、趴伏的敌方干员 | 标 `enemy`；瞄准镜内可见身体同样标注 | 画面必须提供可靠敌我依据，记录判断依据 |
-| 敌方干员倒地但仍可救援/存活 | 标 `enemy`，仅框可见身体 | 不能区分倒地与死亡时，整帧进入待复核区 |
+| 正常站立、移动、蹲伏、趴伏的 `enemy` 目标 | 标 `enemy`；光学放大后可见身体同样标注 | 画面必须提供可靠类别依据，记录判断依据 |
+| `enemy` 目标倒地但仍可救援/存活 | 标 `enemy`，仅框可见身体 | 不能区分倒地与死亡时，整帧进入待复核区 |
 | 明确死亡的尸体、战利品盒、人物雕像/海报 | 不标，作为困难负样本 | 不把尸体与倒地活人混用同一规则 |
 | 友军、自己可见的手臂/武器 | 不标；保留有队友标识的原画面上下文 | 不裁掉用于区分敌我的标记后继续声称标签可靠 |
-| 部分遮挡、只露头部或肢体 | 能确认属于敌方干员则标可见部分；多个可见碎片属于同一人时用一个框包围 | 无法判断两处碎片是否同一人时复核，不拼接猜框 |
+| 部分遮挡、只露头部或肢体 | 能确认属于 `enemy` 则标可见部分；多个可见碎片属于同一目标时用一个框包围 | 无法判断两处碎片是否同一目标时复核，不拼接猜框 |
 | 敌人被完全遮挡，仅有名字、红点、轮廓提示或位置标记 | 不以标记替代身体标注 | 清晰的实际身体轮廓可标；纯 HUD 图标是负样本 |
-| 5–10px 甚至更小目标 | 能确认敌方身份和可见范围就标，尺寸本身不是排除条件 | 放大只能帮助看像素，不能创造细节；至少第二人复核 |
+| 5–10px 甚至更小目标 | 能确认 `enemy` 身份和可见范围就标，尺寸本身不是排除条件 | 放大只能帮助看像素，不能创造细节；至少第二人复核 |
 | 极小不确定点、敌我不明、死亡状态不明 | 不猜标，也不当作背景 | 进入 `review`；初版 YOLO 流程不支持忽略区域，未解决前整帧不进入 train/val/test |
-| 训练场靶、非干员 NPC、菜单/结算/观战 UI | 不进入初版正样本；有代表性时作为独立负样本标签域 | 初版正式测试以实际对局第一人称画面为主，训练靶不能代替敌方干员 |
+| 训练场靶、非目标 NPC、菜单/结算/观战 UI | 不进入初版正样本；有代表性时作为独立负样本标签域 | 初版正式测试以实际采集的第一人称画面为主，训练靶不能代替 `enemy` |
 
 每个可靠可见敌人都必须标注。漏标一人会把他训练成背景，不能只标最显眼的一个。框不包含飘浮名字、血条、阴影和独立枪口闪光；贴身装备计入身体轮廓，伸出的长枪管不扩大身体框。画面边缘截断目标按可见范围标，记录 `truncated`。
 
@@ -86,7 +86,7 @@ training/data/
 | `training/split_dataset.py` | `--manifest`、`--seed 42`、`--ratios 70 15 15`、`--dataset-version`、`--output` | 按组生成划分提案与报告；已冻结版本禁止原地重划 |
 | `training/train.py` | `--data`、`--manifest`、`--model yolov8s-p2.yaml`、`--pretrained yolov8s.pt` 或 `--scratch` | 数据预检通过后加载模型；记录模型结构与迁移报告 |
 | 训练规模 | `--imgsz 960`、`--epochs 150`、`--batch 4`、`--workers 2`、`--device auto`、`--seed 42` | batch 4 是保守开发起点，不保证任意 Mac 内存均足够；OOM 时退出并建议降 batch |
-| 实验管理 | `--project training/runs/delta_enemy`、`--run-id <UTC日期时间>_s42`、`--resume <last.pt>` | 默认独立 run；显式名称已存在就失败；resume 校验数据/模型/配置，禁止覆盖不同实验 |
+| 实验管理 | `--project training/runs/yolo_research`、`--run-id <UTC日期时间>_s42`、`--resume <last.pt>` | 默认独立 run；显式名称已存在就失败；resume 校验数据/模型/配置，禁止覆盖不同实验 |
 | 基线优化器 | `--optimizer AdamW`、`--lr0 0.001`、`--patience 20`、`--amp auto` | 初版固定配置；CUDA 开 AMP，MPS/CPU 默认关闭并记录；不在失败后静默切换设备 |
 | `training/visualize.py` | 保留 `--image/--dir/--yaml`，增加 `--output-dir`、`--seed 42` | 正确匹配 `images/<split>` 与 `labels/<split>`；支持保存图供无 GUI 环境复核 |
 
@@ -94,7 +94,7 @@ training/data/
 
 训练默认关闭随机空间变换：`degrees=0`、`translate=0`、`scale=0`、`shear=0`、`perspective=0`、`fliplr=0`、`flipud=0`、`mosaic=0`、`mixup=0`、`copy_paste=0`，且 `rect=False/multi_scale=False`；避免首版破坏敌我 UI 与极小目标语义。先启用轻量色彩扰动（建议 HSV `h=0.01/s=0.2/v=0.2`）并保存实际 Ultralytics 完整训练配置；后续一次只比较一个增强策略。随机增强只作用于 train，val/test 使用确定性部署预处理。
 
-每个 run 计划保存：`args.yaml`、解析成绝对路径的 `dataset.resolved.yaml`、数据清单及哈希、模型 YAML/迁移报告、依赖锁文件与平台信息、Git revision/dirty 状态、seed、训练日志/曲线、`weights/{best,last}.pt`、评估报告。`best.pt` 根据 val 指标选择，test 不参与 early stopping。原有 `hok_detector` 不自动迁移或覆盖，改名后旧产物需显式 `--weights` 指定。
+每个 run 计划保存：`args.yaml`、解析成绝对路径的 `dataset.resolved.yaml`、数据清单及哈希、模型 YAML/迁移报告、依赖锁文件与平台信息、Git revision/dirty 状态、seed、训练日志/曲线、`weights/{best,last}.pt`、评估报告。`best.pt` 根据 val 指标选择，test 不参与 early stopping。原有运行目录不自动迁移或覆盖，改名后旧产物需显式 `--weights` 指定。
 
 ## 5. 可复现环境候选与导出兼容探针
 
@@ -125,7 +125,7 @@ PyTorch 2.5.1/torchvision 0.20.1 是[官方发布配对](https://pytorch.org/get
 
 实际导出在每个 run 的独立暂存目录执行，避免上游工具清空同名 `_saved_model` 目录时覆盖旧发布产物。消费 `model.export()` 的实际返回路径，检查文件确实属于本次暂存区；不能扫描目录后取“第一个 .tflite”。官方版本可能返回 `best_saved_model/best_float16.tflite`；这只是源码示例，不成为查找规则。
 
-正式输出目录计划为 `training/runs/delta_enemy/<run-id>/exports/<modelId>/`，仅在检查通过后包含 `model.tflite`、`model.tflite.json`、检查与一致性报告、环境/权重/数据来源记录。复制到 Android assets 是独立显式参数或交付步骤，模型与 sidecar 必须作为一对校验后复制；不直接覆盖正在验证的旧版。Android 首版打包目标仍为 `android-app/app/src/main/assets/`。
+正式输出目录计划为 `training/runs/yolo_research/<run-id>/exports/<modelId>/`，仅在检查通过后包含 `model.tflite`、`model.tflite.json`、检查与一致性报告、环境/权重/数据来源记录。复制到 Android assets 是独立显式参数或交付步骤，模型与 sidecar 必须作为一对校验后复制；不直接覆盖正在验证的旧版。Android 首版打包目标仍为 `android-app/app/src/main/assets/`。
 
 sidecar v1 以 [CONTRACTS](CONTRACTS.md) 为权威，训练交付端必须提供：
 

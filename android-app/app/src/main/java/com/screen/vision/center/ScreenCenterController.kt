@@ -1,4 +1,4 @@
-package com.screen.vision.aim
+package com.screen.vision.center
 
 import android.util.Log
 import com.screen.vision.model.DetectResult
@@ -8,20 +8,20 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 /**
- * 自动瞄准控制器。
+ * 屏幕中心移动控制器。
  *
  * 检测循环每帧调用 [onFrame] 更新目标（选屏幕中心最近者），
  * 独立节拍协程读取最新目标，按比例增益 + 死区 + 单步上限计算
- * 注入位移，使准星朝目标收敛。
+ * 注入位移，使屏幕中心朝目标收敛。
  */
-class AimController(
+class ScreenCenterController(
     private val scope: CoroutineScope,
-    private val config: AimConfig = AimConfig(),
+    private val config: ScreenCenterConfig = ScreenCenterConfig(),
 ) {
 
     private val injector = TouchInjector()
 
-    private data class AimTarget(
+    private data class MoveTarget(
         val x: Int,
         val y: Int,
         val screenWidth: Int,
@@ -29,7 +29,7 @@ class AimController(
     )
 
     @Volatile
-    private var target: AimTarget? = null
+    private var target: MoveTarget? = null
 
     @Volatile
     private var running = false
@@ -37,7 +37,7 @@ class AimController(
     /** 检测线程调用：更新最新目标（无目标传空列表）。 */
     fun onFrame(detections: List<DetectResult>, width: Int, height: Int) {
         val best = selectTarget(detections, width / 2, height / 2)
-        target = best?.let { AimTarget(it.x, it.y, width, height) }
+        target = best?.let { MoveTarget(it.x, it.y, width, height) }
     }
 
     fun start() {
@@ -54,7 +54,7 @@ class AimController(
     private suspend fun loop() {
         while (running) {
             if (config.enabled) step()
-            delay(config.aimIntervalMs)
+            delay(config.moveIntervalMs)
         }
     }
 
@@ -75,7 +75,7 @@ class AimController(
         val my = (dy * config.sensitivity).toInt().coerceIn(-config.maxStepPx, config.maxStepPx)
         if (mx == 0 && my == 0) return
 
-        Log.d(TAG, "aim: target=(${t.x},${t.y}) center=($cx,$cy) move=($mx,$my)")
+        Log.d(TAG, "center: target=(${t.x},${t.y}) center=($cx,$cy) move=($mx,$my)")
         injector.swipe(cx, cy, cx + mx, cy + my, config.swipeDurationMs)
     }
 
@@ -90,6 +90,6 @@ class AimController(
     }
 
     companion object {
-        private const val TAG = "AimController"
+        private const val TAG = "ScreenCenter"
     }
 }

@@ -23,7 +23,7 @@ import kotlinx.coroutines.flow.*
  * ScreenVisionSDK.stop(context)
  * ```
  *
- * 三角洲行动 (Delta Force) 当前唯一类别为 `enemy`。
+ * YOLO 研究当前唯一类别为 `enemy`。
  */
 object ScreenVisionSDK {
 
@@ -40,9 +40,9 @@ object ScreenVisionSDK {
      * @param context   Application context
      * @param classNames 类别名称列表，顺序必须与训练时的 dataset.yaml 一致
      * @param modelPath  TFLite 模型路径 (assets/ 或已下载的路径)
-     * @param autoAim    是否启用自动瞄准
+     * @param moveCenter 是否把屏幕中心朝最近检测目标移动
      */
-    fun start(context: Context, classNames: List<String>, modelPath: String = "model.tflite", autoAim: Boolean = false) {
+    fun start(context: Context, classNames: List<String>, modelPath: String = "model.tflite", moveCenter: Boolean = false) {
         if (isStarted) return
         isStarted = true
         _classNames = classNames
@@ -57,7 +57,7 @@ object ScreenVisionSDK {
         serviceIntent = Intent(context, DetectionService::class.java).apply {
             putExtra(DetectionService.EXTRA_CLASS_NAMES, classNames.toTypedArray())
             putExtra(DetectionService.EXTRA_MODEL_PATH, modelPath)
-            putExtra(DetectionService.EXTRA_AUTO_AIM, autoAim)
+            putExtra(DetectionService.EXTRA_MOVE_CENTER, moveCenter)
         }
         context.startForegroundService(serviceIntent!!)
 

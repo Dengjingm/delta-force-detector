@@ -49,7 +49,7 @@
 
 **可复现实验训练；M2；依赖：T04。** 修改 `train.py`，拟建训练依赖文件/锁、配置和run报告。
 
-从官方P2 YAML构建并显式迁移权重，记录匹配/未匹配参数；CLI提供data/model/pretrained/device/imgsz/batch/epochs/seed/run-id/resume；自动设备顺序CUDA→MPS→CPU，用户显式设置优先。运行目录 `runs/delta_enemy/<run-id>` 不覆盖；先少量批准样例smoke再正式训练。验收DATA06；没有数据时只完成工具，真实训练门禁仍待测。
+从官方P2 YAML构建并显式迁移权重，记录匹配/未匹配参数；CLI提供data/model/pretrained/device/imgsz/batch/epochs/seed/run-id/resume；自动设备顺序CUDA→MPS→CPU，用户显式设置优先。运行目录 `runs/yolo_research/<run-id>` 不覆盖；先少量批准样例smoke再正式训练。验收DATA06；没有数据时只完成工具，真实训练门禁仍待测。
 
 ### T06
 
@@ -188,7 +188,7 @@ C07清单/下载期限/大小/hash→不可变暂存版本→显式stage→worke
 | ID | 触发条件 | 具体实施与停止条件 |
 |---|---|---|
 | X01 INT8 | fp16完整基线通过，存在已量化的推理/内存瓶颈 | ≥300train校准帧/≥5对局；仍float32 I/O；任何桶recall下降≤2个百分点、全量precision/recall下降≤1个百分点，同时满足绝对门槛；p95改善≥15%或实际常驻内存下降≥25%，否则淘汰 |
-| X02 ROI/切片 | 补样/复核/全图尺寸对照后，仍证实缩放导致tiny失败 | 首个对照采用原图960×960瓦片、20%重叠，边缘补114；全屏网格按768步长覆盖、末片贴边去重；每个tile坐标先回原图，再按同类IoU0.5合并；完整扫描轮输出一组结果，captureStart沿用原帧，必须报告全屏更新周期/帧龄；不能只报单tile15fps。失败则对照较小P2/更高全图分辨率，记录前沿；不加入跟踪或自动瞄准 |
+| X02 ROI/切片 | 补样/复核/全图尺寸对照后，仍证实缩放导致tiny失败 | 首个对照采用原图960×960瓦片、20%重叠，边缘补114；全屏网格按768步长覆盖、末片贴边去重；每个tile坐标先回原图，再按同类IoU0.5合并；完整扫描轮输出一组结果，captureStart沿用原帧，必须报告全屏更新周期/帧龄；不能只报单tile15fps。失败则对照较小P2/更高全图分辨率，记录前沿；切片路径只合并检测框，不另接控制闭环 |
 | X03 更多ROM/机型 | K70 v1已通过且明确需要扩展支持 | 每个指纹重复设备探针、截图适配、权限/SDK恢复、精度一致性及持续性能；未覆盖版本显示不支持，不仅修改支持列表 |
 
 X02全屏多tile在K70可能不满足250ms/15fps，这是需测量的候选；规划包含验证方法和淘汰条件，不能因为规划了切片就承诺远距实时能力已解决。
@@ -217,7 +217,7 @@ X02全屏多tile在K70可能不满足250ms/15fps，这是需测量的候选；�
 | 工作 | 计划入口 | 工作目录/输出 |
 |---|---|---|
 | 数据检查/划分 | `python training/validate_dataset.py --manifest …` / `python training/split_dataset.py --manifest … --seed 42` | 仓库根；固定manifest与质量报告 |
-| 训练 | `python training/train.py --data training/data/dataset.yaml --manifest … --model yolov8s-p2.yaml --imgsz 960 --seed 42 --run-id …` | 仓库根；training/runs/delta_enemy/run-id |
+| 训练 | `python training/train.py --data training/data/dataset.yaml --manifest … --model yolov8s-p2.yaml --imgsz 960 --seed 42 --run-id …` | 仓库根；training/runs/yolo_research/run-id |
 | 导出 | `python training/export_tflite.py --weights … --output-dir …` | 导出环境；候选模型包+sidecar，固定合同选项 |
 | 评价 | `python training/evaluate.py --model … --manifest … --split test --threshold …` | 仓库根；覆盖/精度报告 |
 | Native构建 | `./native-daemon/build.sh --abi arm64-v8a --api 28` | 仓库根；不推送设备 |
@@ -225,4 +225,4 @@ X02全屏多tile在K70可能不满足250ms/15fps，这是需测量的候选；�
 | Android检查 | `./android-app/gradlew -p android-app :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` | 仓库根；Wrapper实现后可用；AAR阶段加入library任务 |
 | 模型一致性 | `python training/compare_backends.py --manifest … --reference … --candidate …` | 仓库根；保存相同输入tensor与两端输出 |
 
-未来CLI统一从仓库根目录执行，路径按显式参数或配置文件位置解析；模型目录固定 `training/runs/delta_enemy/<run-id>/`。字段/目录与模块规格如有差异，以CONTRACTS语义为准并在实施前同步命令参数文档。执行某任务遇到前置条件缺失，标明哪个门禁未过并继续独立任务；不能省略任务或把未运行勾选为完成。
+未来CLI统一从仓库根目录执行，路径按显式参数或配置文件位置解析；模型目录固定 `training/runs/yolo_research/<run-id>/`。字段/目录与模块规格如有差异，以CONTRACTS语义为准并在实施前同步命令参数文档。执行某任务遇到前置条件缺失，标明哪个门禁未过并继续独立任务；不能省略任务或把未运行勾选为完成。

@@ -10,7 +10,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.screen.vision.aim.AimController
+import com.screen.vision.center.ScreenCenterController
 import com.screen.vision.api.ResultBus
 import com.screen.vision.detection.PostProcessor
 import com.screen.vision.detection.Preprocessor
@@ -33,7 +33,7 @@ class DetectionService : Service() {
     private lateinit var preprocessor: Preprocessor
     private lateinit var detector: YOLODetector
     private lateinit var postProcessor: PostProcessor
-    private var aimController: AimController? = null
+    private var centerController: ScreenCenterController? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -49,7 +49,7 @@ class DetectionService : Service() {
         val classNames = intent?.getStringArrayExtra(EXTRA_CLASS_NAMES)?.toList()
             ?: DEFAULT_CLASS_NAMES.toList()
         val modelPath = intent?.getStringExtra(EXTRA_MODEL_PATH) ?: "model.tflite"
-        val autoAim = intent?.getBooleanExtra(EXTRA_AUTO_AIM, false) ?: false
+        val moveCenter = intent?.getBooleanExtra(EXTRA_MOVE_CENTER, false) ?: false
 
         if (!initModel(classNames, modelPath)) {
             Log.e(TAG, "Model init failed; aborting start")
@@ -59,8 +59,8 @@ class DetectionService : Service() {
             return START_NOT_STICKY
         }
 
-        if (autoAim) {
-            aimController = AimController(scope).also { it.start() }
+        if (moveCenter) {
+            centerController = ScreenCenterController(scope).also { it.start() }
         }
 
         scope.launch { runDetectionLoop() }
@@ -103,7 +103,7 @@ class DetectionService : Service() {
             val detections = postProcessor.process(rawOutput, preprocessed)
 
             ResultBus.publish(detections)
-            aimController?.onFrame(detections, preprocessed.originalWidth, preprocessed.originalHeight)
+            centerController?.onFrame(detections, preprocessed.originalWidth, preprocessed.originalHeight)
 
             frameCount++
             totalTimeUs += (System.nanoTime() - frameStart) / 1000
@@ -121,8 +121,8 @@ class DetectionService : Service() {
     }
 
     private fun cleanup() {
-        aimController?.stop()
-        aimController = null
+        centerController?.stop()
+        centerController = null
         ResultBus.publish(emptyList())
         isRunning = false
         try { socketClient.disconnect() } catch (_: Exception) { }
@@ -144,7 +144,7 @@ class DetectionService : Service() {
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                CHANNEL_ID, "Screen Vision",
+                CHANNEL_ID, "yolo-research",
                 NotificationManager.IMPORTANCE_LOW
             ).apply { setShowBadge(false) }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -153,7 +153,7 @@ class DetectionService : Service() {
 
     private fun buildNotification(): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Screen Vision")
+            .setContentTitle("yolo-research")
             .setContentText("Detection service running")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
@@ -166,7 +166,7 @@ class DetectionService : Service() {
         private const val NOTIFICATION_ID = 1001
         const val EXTRA_CLASS_NAMES = "class_names"
         const val EXTRA_MODEL_PATH = "model_path"
-        const val EXTRA_AUTO_AIM = "auto_aim"
+        const val EXTRA_MOVE_CENTER = "move_center"
 
         val DEFAULT_CLASS_NAMES = arrayOf("enemy")
     }

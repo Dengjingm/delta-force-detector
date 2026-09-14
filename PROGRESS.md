@@ -34,7 +34,7 @@
 | B07 | P1 | [train.py](training/train.py) 依赖未经确认的 `yolov8s-p2.pt`，只检查 YAML；[visualize.py](training/visualize.py) 标签路径多出一层 `images`；[export_tflite.py](training/export_tflite.py) 忽略返回路径，仅扫描权重同级 | 明确 P2 YAML/迁移权重来源、数据预检、正确配对与导出定位；少量样例跑通后再正式训练 |
 | B08 | P1 | [帧发送端](native-daemon/socket_server.c) 忽略 stride，无短写重试与 SIGPIPE 防护；[接收端](android-app/app/src/main/java/com/screen/vision/socket/UnixSocketClient.kt) 漏 width 上限/height 下限，Int 乘法可能溢出 | 固定 LE、紧密 RGBA、安全尺寸计算；覆盖分段读写、半帧断流、慢客户端和对端关闭 |
 | B09 | P1 | [SDK](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt) 提前设 started，缺 daemon 安装/就绪与实例管理，延时绑定任务不取消；[Service](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt) 首次连接失败绕过 cleanup，无重连及 finally | 建立启动/就绪/运行/失败/停止状态；验证快速 start/stop、daemon 迟到/退出、模型加载失败后恢复 |
-| B10 | P1 | [requirements.txt](training/requirements.txt) 仅版本下限；数据划分/测试集缺失；训练目录残留 `hok_detector`；设备只选 MPS/CPU | 记录验证环境、模型/数据版本、实验配置和 seed；按对局划分；统一命名；按需增加 CUDA 配置 |
+| B10 | P1 | [requirements.txt](training/requirements.txt) 仅版本下限；数据划分/测试集缺失；设备只选 MPS/CPU | 记录验证环境、模型/数据版本、实验配置和 seed；按来源分组划分；统一命名；按需增加 CUDA 配置 |
 | B11 | P1 | 960 固定预处理、每帧多次大分配、30fps 采集与 15fps 消费；协议无采集时间戳；[main.c](native-daemon/main.c) FPS 统计不计等待且有整数乘法溢出风险 | 先测阶段耗时和端到端帧龄；规划时间戳/帧编号和最新帧策略，双端同步升级；基于证据再优化缓存和模型 |
 | B12 | P2 | [ModelUpdater](android-app/app/src/main/java/com/screen/vision/update/ModelUpdater.kt) 使用占位 URL、未校验 md5；SDK 不选缓存；detector 仅支持 assets | 基线阶段不依赖远端更新；后续实现兼容性校验、版本选择、原子切换和回滚再验收 |
 
@@ -57,7 +57,7 @@
 
 ## K70 对方案选择的影响
 
-用户提供：红米 K70，第二代骁龙 8、最高 3.19GHz、12GB 物理内存 + 4GB 扩展内存、3200×1440 屏幕；root 稍后进行。Android/HyperOS 版本、实际截图和游戏渲染尺寸、root 方案、GPU delegate 支持情况尚未知。
+用户提供：红米 K70，第二代骁龙 8、最高 3.19GHz、12GB 物理内存 + 4GB 扩展内存、3200×1440 屏幕；root 稍后进行。Android/HyperOS 版本、实际采集/截图分辨率、root 方案、GPU delegate 支持情况尚未知。
 
 若横屏截图确为 3200×1440，缩到 960×960 LetterBox 时缩放系数为 **0.3**，有效画面约为 **960×432**，上下各填充 264 像素。原图 5–10px 目标因此仅剩约 **1.5–3px**。这解释了为何需要按输入像素大小评估远距召回，不能只靠“P2 + 960”承诺效果。
 
@@ -117,11 +117,11 @@
 | T08-C v2 编解码 host 测试 | `frame_protocol.c/.h` 以 gcc C11 `-Wall -Wextra -Werror` 编译，`test_frame_protocol.c` 全绿：golden 逐字节往返、错 magic/version/headerBytes、越界尺寸/stride/format/rotation/payload/时间顺序/零 ID 均正确拒绝，UBSan 无未定义行为 | C 端 v2 编解码与校验已 host 验证；`socket_server.c` 仍为 v1、Kotlin 端未实现，接入属 T14/T08-Kotlin |
 | Python 训练依赖（CPU） | venv `venv-training` 内 torch 2.14.0+cpu / torchvision 0.29.0+cpu / ultralytics 8.4.150 / tensorflow 2.21.0 / opencv-python-headless 4.11.0.86 / numpy 1.26.4 / pillow 12.3.0 / matplotlib 3.11.2 / pyyaml 6.0.3 / tqdm 4.70.1，全部 import 通过；labelimg 未装（仅 GUI）；torch 无 CUDA | CPU 训练/导出依赖就绪，尚未跑通训练或导出；numpy 锁 1.26.4 以兼容 TF，opencv 用 headless 版规避无头机缺 libGL |
 | M1 构建（NDK + Android） | `build.sh` 用 NDK r26d 交叉编译 arm64 `screen-visiond`（32K）→ `res/raw/screen_visiond`；Gradle 8.7 + JDK 17 生成 Wrapper；`assembleDebug` 产出 `app-debug.apk`（arm64-only，约 9.3M） | M1 构建闭环已通；不代表可安装/检测；GPU delegate 已移除改 XNNPACK CPU，待 M3 重加 |
-| Roboflow `hello-n/delta-force-wtowy-gq2n9` v1 YOLOv8 下载 | ZIP 776,596,590 bytes；SHA-256 `e9413acedd9d789ee0f7e15412126af27cd32ef7e3bda0770f08b090c0d5f634`；ZIP CRC 通过；归档中的 3 个 `data.yaml` 条目内容相同 | 已取得可追溯的隔离候选数据，并以 GitHub Release `dataset-roboflow-v1` 分发；不代表符合 `enemy` 语义 |
+| Roboflow YOLO 候选集 v1 下载 | ZIP 776,596,590 bytes；SHA-256 `e9413acedd9d789ee0f7e15412126af27cd32ef7e3bda0770f08b090c0d5f634`；ZIP CRC 通过；归档中的 3 个 `data.yaml` 条目内容相同 | 已取得可追溯的隔离候选数据，并以 GitHub Release 标签 `dataset-roboflow-v1` 分发；不代表符合 `enemy` 语义 |
 | 候选数据结构与标签静态检查 | train/valid/test 为 1246/357/180 张，图片与标签一一配对；3272 个框均为合法五列 YOLO 坐标；类别计数 `head=1227`、`person=2045` | 原始图像与标注文件配对完整；没有缺标、孤儿标签或非法坐标行 |
 | 候选 `data.yaml` 路径检查 | 导出文件写入 `../train/images`、`../valid/images`、`../test/images`，按 YAML 所在目录解析均不存在 | 保留原文件作为来源证据；正式接入时须生成项目自己的配置，不能直接使用该 YAML |
 | 候选图片解码、尺寸和精确重复检查 | 1783 张 JPEG 全部由 `djpeg` 解码通过；1782 张为 3840×2160，1 张为 3840×2100；无相同 SHA-256 图片及跨 split 精确重复 | 文件未见损坏或字节级重复；不能排除近邻帧泄漏 |
-| Ultralytics `hello-n/delta-force-mergedyolov8` 下载 | 通过公开数据集与图片 API 分 3 页取得 14,820 条完整索引并下载全部 JPEG；本地图片总计 748,968,200 bytes，下载失败 0；索引 SHA-256 `16f6189f42f8ac85f1ea05994910db0150a785e2a7e5e79abae1a0146f69937d` | 已取得第二套隔离候选数据，并按用户要求以独立 GitHub Release 留档；页面标记 `No license`，该发布不等同于获得使用或再分发授权，也不能直接作为正式训练集 |
+| Ultralytics 公开 YOLO 合并候选集下载 | 通过公开数据集与图片 API 分 3 页取得 14,820 条完整索引并下载全部 JPEG；本地图片总计 748,968,200 bytes，下载失败 0；索引 SHA-256 `16f6189f42f8ac85f1ea05994910db0150a785e2a7e5e79abae1a0146f69937d` | 已取得第二套隔离候选数据，并按用户要求以独立 GitHub Release 留档；页面标记 `No license`，该发布不等同于获得使用或再分发授权，也不能直接作为正式训练集 |
 | Ultralytics 合并候选结构与标签检查 | train/val/test 为 11,192/3,109/519 张，图片与标签一一配对；11,131 张有标注、3,689 张为空标签；22,481 个框合法，`head=10,535`、`person=11,946`；跨 split 内容 hash 重复 0；抽样 120 张 JPEG 解码失败 0 | API 数量、字节数、类别和划分与平台一致；无非法坐标，但来源分组和近邻帧泄漏仍未证明 |
 | Ultralytics 独立归档 | ZIP 为 769,492,828 bytes，SHA-256 `ebcc1cc6648738e157f1173f57e7e7f546f9616907bd32081522f47ff916d4a1`；`unzip -t` 无错误；使用标签 `dataset-ultralytics-merged-20260914`，与既有 `dataset-roboflow-v1` 分离 | Release 是候选数据快照；源页面无许可证声明，使用前仍须确认授权 |
 | 两套候选关系与尺寸比较 | Ultralytics 合并集包含旧 Roboflow v1 的全部 1,783 个原始文件名 stem，另含更多来源与裁剪变体；9,766 张为 416×416、5,053 张为 640×640、1 张为 641×640，旧集则为 3840×2160/2100 | 合并集规模更大且含裁剪图，但像素分辨率更低；“更清晰”不能由原图分辨率支持，须按目标像素与标注质量抽样复核 |
@@ -133,9 +133,9 @@
 
 下一批可继续 T03（以候选数据为输入落实数据语义、清单与复核流程）及 T08 的 Kotlin 端 `FrameHeader.kt` 编译验证；`socket_server.c` 接入 v2 属 T14。M1 构建已闭环，真机安装/启动与缺模型/未 root 反馈待设备验证。训练/导出 CPU 环境已就绪，但候选数据尚不符合单类 `enemy` 契约，不能声称训练或导出成功。
 
-## 自动瞄准与结果通路实现轮（2026-09-14）
+## 屏幕中心移动与结果通路实现轮（2026-09-14）
 
-按用户指示（root/真机由用户自行验证，本阶段假设环境就绪、以代码实现为主）补齐检测链路与自动瞄准功能，并修复 B03/B04/B05 与 N1。本轮均只到「代码实现 + 本地构建通过」，未做真机、真实模型与真实截图验证。
+按用户指示（root/真机由用户自行验证，本阶段假设环境就绪、以代码实现为主）补齐检测链路与屏幕中心移动功能，并修复 B03/B04/B05 与 N1。本轮均只到「代码实现 + 本地构建通过」，未做真机、真实模型与真实截图验证。
 
 | 改动 | 内容 | 验证状态 |
 |---|---|---|
@@ -144,7 +144,7 @@
 | `PostProcessor.kt`（B04） | 按 C02 解析 `x1,y1,x2,y2,score,classId` 归一化输出，score≤0 视为 padding、非有限/非法 class 判坏帧、中心落 padding 丢弃，回映原图中心并 floor+夹取 | assembleDebug 通过 |
 | `Preprocessor.kt`（N1） | 按 C03 逐轴 `scaleX=newW/W`、`scaleY=newH/H`，`newW/newH=max(1,floor)`，Preprocessed 增带 newW/newH/inputSize | assembleDebug 通过 |
 | `ResultBus.kt`（B05，新增） | 进程级 `MutableSharedFlow<List<DetectResult>>`，Service 每帧发布（含空列表），`SDK.observe()` 返回同一实例，移除无调用者的 `setResultSource` | assembleDebug 通过 |
-| `aim/`（新增 AimConfig/TouchInjector/AimController） | 自动瞄准：选中心最近目标 → 比例增益 + 死区 + 单步上限 → `su -c input swipe` 注入拖拽；独立节拍协程与检测循环解耦 | assembleDebug 通过；注入方向/灵敏度需真机按控制方案调参 |
-| `DetectionService`/`SDK`/`MainActivity` | Service 用 `detector.inputSize` 驱动预处理、发布 ResultBus、驱动 AimController；`SDK.start(autoAim=...)`、`observe()=ResultBus.results`；MainActivity 增自动瞄准按钮 | assembleDebug 通过 |
+| `center/`（ScreenCenterConfig/TouchInjector/ScreenCenterController） | 屏幕中心移动：选中心最近目标 → 比例增益 + 死区 + 单步上限 → `su -c input swipe` 注入拖拽；独立节拍协程与检测循环解耦 | assembleDebug 通过；注入方向/灵敏度需真机按控制方案调参 |
+| `DetectionService`/`SDK`/`MainActivity` | Service 用 `detector.inputSize` 驱动预处理、发布 ResultBus、驱动 ScreenCenterController；`SDK.start(moveCenter=...)`、`observe()=ResultBus.results`；MainActivity 增屏幕中心移动按钮 | assembleDebug 通过 |
 
-本轮构建：`build.sh`（NDK r26d arm64）产出 `screen-visiond`（36K）；`gradle -p android-app :app:assembleDebug` 通过。剩余未验证项：真实截图 raw 格式、真实模型输出张量、root 触控注入方向与延迟；`input swipe` 每步新建 su 进程、sendevent/持久 su 低延迟注入属后续优化。
+本轮构建：`build.sh`（NDK r26d arm64）产出 `screen-visiond`（36K）；`gradle -p android-app :app:assembleDebug` 通过。剩余未验证项：真实截图 raw 格式、真实模型输出张量、root 触控方向与延迟；`input swipe` 每步新建 su 进程。

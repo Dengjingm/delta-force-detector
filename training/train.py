@@ -14,6 +14,7 @@ from ultralytics import YOLO
 def train():
     # ── 配置区 ──────────────────────────────────────────
     project_root = Path(__file__).parent
+    os.chdir(project_root)
     data_yaml = str(project_root / "data" / "dataset.yaml")
     model_name = str(project_root / "yolov8s.pt")  # MVP: 标准权重(P2 变体不可得,后续对齐)
     epochs = 50                     # MVP: 先跑通;正式训练再增加
@@ -44,7 +45,7 @@ def train():
         workers=8,
         amp=True,
         project=str(project_root / "runs"),
-        name="hok_detector",
+        name="yolo_research",
         exist_ok=True,
         pretrained=True,
         optimizer="AdamW",
@@ -59,12 +60,12 @@ def train():
     )
 
     # ── 保存最佳权重 ────────────────────────────────────
-    best_pt = project_root / "runs" / "hok_detector" / "weights" / "best.pt"
+    best_pt = project_root / "runs" / "yolo_research" / "weights" / "best.pt"
     if best_pt.exists():
         print(f"\n[OK] 训练完成！最佳权重: {best_pt}")
         print(f"     验证 mAP50: {results.results_dict.get('metrics/mAP50(B)', 'N/A'):.3f}")
     else:
-        print("[WARN] best.pt 未找到，请检查 runs/hok_detector/weights/ 目录")
+        print("[WARN] best.pt 未找到，请检查 runs/yolo_research/weights/ 目录")
 
     return results
 

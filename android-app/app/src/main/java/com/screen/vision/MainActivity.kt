@@ -27,7 +27,7 @@ class MainActivity : Activity() {
         }
 
         val title = TextView(this).apply {
-            text = "Screen Vision Demo"
+            text = "yolo-research"
             textSize = 22f
             setTextColor(Color.WHITE)
         }
@@ -43,15 +43,15 @@ class MainActivity : Activity() {
 
         val startBtn = Button(this).apply {
             text = "Start detection"
-            setOnClickListener { onStartClicked(autoAim = false) }
+            setOnClickListener { onStartClicked(moveCenter = false) }
         }
         root.addView(startBtn)
 
-        val aimBtn = Button(this).apply {
-            text = "Start auto-aim"
-            setOnClickListener { onStartClicked(autoAim = true) }
+        val moveCenterBtn = Button(this).apply {
+            text = "Start move center"
+            setOnClickListener { onStartClicked(moveCenter = true) }
         }
-        root.addView(aimBtn)
+        root.addView(moveCenterBtn)
 
         val stopBtn = Button(this).apply {
             text = "Stop"
@@ -62,12 +62,12 @@ class MainActivity : Activity() {
         return root
     }
 
-    private fun onStartClicked(autoAim: Boolean) {
+    private fun onStartClicked(moveCenter: Boolean) {
         if (!hasModel()) {
             statusText.text = "Missing model: place model.tflite in assets/ and rebuild"
             return
         }
-        ScreenVisionSDK.start(this, listOf("enemy"), autoAim = autoAim)
+        ScreenVisionSDK.start(this, listOf("enemy"), moveCenter = moveCenter)
         refreshStatus()
     }
 

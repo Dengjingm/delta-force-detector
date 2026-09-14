@@ -14,7 +14,7 @@
 | Socket 协议 | [socket_server.c](native-daemon/socket_server.c)、[UnixSocketClient.kt](android-app/app/src/main/java/com/screen/vision/socket/UnixSocketClient.kt) | main 循环、取消/重连、最大帧尺寸 |
 | v2 帧协议编解码 | [frame_protocol.c](native-daemon/frame_protocol.c)、[frame_protocol.h](native-daemon/frame_protocol.h)、[contracts/fixtures](contracts/fixtures/README.md) | 64 字节 LE 头、校验、黄金字节；尚未接入 socket_server |
 | 生命周期与结果订阅 | [ScreenVisionSDK.kt](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt)、[DetectionService.kt](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt)、[ResultBus.kt](android-app/app/src/main/java/com/screen/vision/api/ResultBus.kt) | Manifest、daemon 就绪与退出、结果通路 |
-| 自动瞄准 | [AimController.kt](android-app/app/src/main/java/com/screen/vision/aim/AimController.kt)、[TouchInjector.kt](android-app/app/src/main/java/com/screen/vision/aim/TouchInjector.kt)、[AimConfig.kt](android-app/app/src/main/java/com/screen/vision/aim/AimConfig.kt) | 目标选择、注入方向/灵敏度、DetectionService 接入 |
+| 屏幕中心移动 | [ScreenCenterController.kt](android-app/app/src/main/java/com/screen/vision/center/ScreenCenterController.kt)、[TouchInjector.kt](android-app/app/src/main/java/com/screen/vision/center/TouchInjector.kt)、[ScreenCenterConfig.kt](android-app/app/src/main/java/com/screen/vision/center/ScreenCenterConfig.kt) | 目标选择、注入方向/灵敏度、DetectionService 接入 |
 | 坐标与置信度 | [Preprocessor.kt](android-app/app/src/main/java/com/screen/vision/detection/Preprocessor.kt)、[PostProcessor.kt](android-app/app/src/main/java/com/screen/vision/detection/PostProcessor.kt) | 模型输出单位、DetectResult、原图尺寸 |
 | 模型更新 | [ModelUpdater.kt](android-app/app/src/main/java/com/screen/vision/update/ModelUpdater.kt) | SDK 选择路径、detector 加载方式、回滚 |
 | 构建与打包 | [CMakeLists.txt](native-daemon/CMakeLists.txt)、[build.sh](native-daemon/build.sh)、[app/build.gradle.kts](android-app/app/build.gradle.kts) | 根 Gradle 配置、NDK、二进制资源路径 |
@@ -37,16 +37,17 @@
 │   └── fixtures/                     T07 黄金帧基准：README + 生成器 + .bin + manifest
 ├── training/
 │   ├── train.py                      训练入口 train()
+│   ├── remap_and_prepare.py          候选集重映射为单类 enemy（Roboflow/Ultralytics 布局）
 │   ├── export_tflite.py              导出入口 export_tflite()
 │   ├── visualize.py                  标注显示与坐标反归一化
 │   ├── requirements.txt              Python 依赖下限，未锁定环境
 │   └── data/
 │       ├── dataset.yaml              nc=1, names={0: enemy}
 │       └── incoming/                    Git 忽略的候选数据区
-│           ├── roboflow-hello-n-delta-force-wtowy-gq2n9-v1-yolov8/
+│           ├── roboflow-yolo-candidate-v1/
 │           │                            候选 ZIP 与原样解压数据；head/person，待复核
-│           └── ultralytics-hello-n-delta-force-mergedyolov8-2026-09-14/
-│                                        公开 API 下载的 YOLO 候选集；14,820 张，待复核
+│           └── ultralytics-yolo-candidate-2026-09-14/
+│                                        公开 YOLO 候选集；14,820 张，待复核
 ├── native-daemon/
 │   ├── main.c                        进程入口、30fps 目标循环、信号与统计
 │   ├── screencap.c / screencap.h      截图后端与 FrameBuffer
@@ -59,7 +60,7 @@
 └── android-app/
     ├── gradlew / gradlew.bat         Gradle Wrapper 入口（8.7）
     ├── gradle/wrapper/               wrapper jar + properties（gradle-8.7-bin）
-    ├── settings.gradle.kts           仓库和 :app；工程名尚为 HonorOfKingsDetector
+    ├── settings.gradle.kts           仓库和 :app；工程名为 yolo-research
     ├── build.gradle.kts              AGP 8.2.0 / Kotlin 1.9.20
     ├── gradle.properties             Gradle、AndroidX 配置
     └── app/
@@ -69,22 +70,22 @@
             ├── res/raw/screen_visiond  arm64 daemon 二进制（NDK 交叉编译产物）
             └── java/com/screen/vision/
                 ├── VisionApp.kt                 仅保存 Application 实例
-                ├── MainActivity.kt              诊断入口：状态、启动/停止、自动瞄准开关
-                ├── api/ScreenVisionSDK.kt       start(autoAim) / observe / tap / swipe / stop
-                ├── api/ResultBus.kt             进程级结果总线（Service→SDK/瞄准）
-                ├── service/DetectionService.kt  收帧、推理、发布 ResultBus、驱动瞄准
+                ├── MainActivity.kt              诊断入口：状态、启动/停止、屏幕中心移动开关
+                ├── api/ScreenVisionSDK.kt       start(moveCenter) / observe / tap / swipe / stop
+                ├── api/ResultBus.kt             进程级结果总线（Service→SDK/屏幕中心移动）
+                ├── service/DetectionService.kt  收帧、推理、发布 ResultBus、驱动屏幕中心移动
                 ├── detection/YOLODetector.kt    C02 契约推理（[1,S,S,3]→[1,N,6]，XNNPACK CPU）
                 ├── detection/Preprocessor.kt    C03 逐轴 LetterBox、RGB float32
                 ├── detection/PostProcessor.kt   C02 归一化 xyxy_score_class → 原图中心
-                ├── aim/AimConfig.kt             瞄准参数
-                ├── aim/TouchInjector.kt         root input swipe 注入
-                ├── aim/AimController.kt         目标选择、增益+死区+步长、节拍注入
+                ├── center/ScreenCenterConfig.kt 屏幕中心移动参数
+                ├── center/TouchInjector.kt      root input swipe 注入
+                ├── center/ScreenCenterController.kt 目标选择、增益+死区+步长、节拍注入
                 ├── socket/UnixSocketClient.kt   读满帧头和像素，创建 Bitmap
                 ├── update/ModelUpdater.kt       查询版本、下载缓存
                 └── model/DetectResult.kt        elementId / x / y / confidence
 ```
 
-Gradle Wrapper（8.7）与 `MainActivity` 诊断入口已落地，debug APK 可构建（M1）；仍无独立 library/AAR 模块、测试目录或 CI。APK 中没有 `assets/model.tflite`。正式训练目录 `images/{train,val,test}`、`labels/{train,val,test}` 也尚未建立；`incoming/` 候选数据未接入 `dataset.yaml`。
+Gradle Wrapper（8.7）与 `MainActivity` 诊断入口已落地，debug APK 可构建（M1）；仍无独立 library/AAR 模块、测试目录或 CI。APK 中没有 `assets/model.tflite`。`remap_and_prepare.py` 可将 incoming 候选集重映射为本地 `images/{train,val,test}`、`labels/{train,val,test}`（git 忽略）；这仍是 `head`/`person`→`enemy` 的 MVP 合并，不是正式语义复核。
 
 ## 3. 调用链与断点
 
@@ -97,7 +98,7 @@ Gradle Wrapper（8.7）与 `MainActivity` 诊断入口已落地，debug APK 可�
       YOLO("yolov8s-p2.pt")                ← 来源/可加载性待验证
       MPS 可用则 MPS，否则 CPU             ← 没有 CUDA 分支
       960 / batch 16 / 150 epochs
-  → training/runs/hok_detector/weights/best.pt（预期，尚无产物）
+  → training/runs/yolo_research/weights/best.pt（预期，尚无产物）
   → export_tflite.py:export_tflite()
       format=tflite / imgsz=960 / nms=True
       默认 half=True；--int8 时 int8=True
@@ -110,7 +111,7 @@ Gradle Wrapper（8.7）与 `MainActivity` 诊断入口已落地，debug APK 可�
 ### 3.2 在线帧与检测结果
 
 ```text
-调用方 → ScreenVisionSDK.start(context, classNames, modelPath, autoAim)
+调用方 → ScreenVisionSDK.start(context, classNames, modelPath, moveCenter)
   ├─ launchDaemon() → su -c /data/local/tmp/screen-visiond
   │    main() → screencap_init() → socket_server_init() → accept()
   │      循环：screencap_capture() → socket_server_send_frame() → 节流
@@ -120,14 +121,14 @@ Gradle Wrapper（8.7）与 `MainActivity` 诊断入口已落地，debug APK 可�
   │    onCreate() → 通知、Socket
   │    onStartCommand() → initModel() → YOLODetector / Preprocessor(detector.inputSize) / PostProcessor
   │      runDetectionLoop() → connect → readFrame → preprocess → detect → process
-  │        → ResultBus.publish(detections) → aimController?.onFrame(...)
+  │        → ResultBus.publish(detections) → centerController?.onFrame(...)
   └─ observe() 返回 ResultBus.results（进程级单例，Service 发布、调用方订阅）
        （SDK 仍保留延时 bindService，但结果不再经 Binder 转发，Binder 路径已冗余）
 ```
 
 `setResultSource()` 存在但没有调用点。`stop()` 会解绑、停止 Service 并执行 `killall`，没有保存和回收结果收集任务；启动链路也没有 daemon 安装解包、就绪握手或可靠的实例管理。
 
-`tap()` / `swipe()` 是独立的 root shell 调用。检测循环中没有自动点击或滑动逻辑。
+`tap()` / `swipe()` 是独立的 root shell 调用。`moveCenter` 开启时，ScreenCenterController 按检测结果移动屏幕中心。
 
 ## 4. 跨模块契约：当前事实与修复边界
 
@@ -135,7 +136,7 @@ Gradle Wrapper（8.7）与 `MainActivity` 诊断入口已落地，debug APK 可�
 
 唯一类别为 `0: enemy`。标签每行 `class_id cx cy w h`，坐标相对于原始截图归一化。`dataset.yaml` 与 `DetectionService.DEFAULT_CLASS_NAMES` 当前一致；SDK 的调用方仍必须显式传入类别列表。
 
-训练产物目录目前是 `hok_detector`，并非 `delta_enemy`。重命名时同时修改训练保存位置、导出默认权重路径和使用说明。不要为了让路径名好看而把未发生的代码变更写入地图。
+训练产物目录目前是 `yolo_research`。重命名时同时修改训练保存位置、导出默认权重路径和使用说明。不要为了让路径名好看而把未发生的代码变更写入地图。
 
 ### 4.2 帧传输
 

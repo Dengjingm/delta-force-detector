@@ -1,12 +1,12 @@
-# Delta Force（三角洲行动）敌方干员视觉检测
+# yolo-research
 
-目标是在 root Android 设备上检测游戏画面中的敌方干员，返回中心坐标和置信度。当前聚焦单类 `enemy`，训练候选为 YOLOv8s-P2、960×960 输入，15fps 为待验证目标。
+目标是在 root Android 设备上做 YOLOv8 单类检测实验，返回屏幕中心坐标和置信度。当前聚焦单类 `enemy`，训练候选为 YOLOv8s-P2、960×960 输入，15fps 为待验证目标。
 
 **当前状态：可构建的原型脚手架，尚未跑通检测。** M1 已生成 arm64 daemon 和 debug APK，v2 帧协议 C 端已有 host 测试；本地已隔离下载 Roboflow v1 与 Ultralytics Platform 合并候选数据，两者类别均为 `head` / `person`。候选数据尚未按 `enemy` 语义复核，合并集也没有许可证声明；模型产物不存在，运行链路仍有接口不匹配，当前不能直接训练后装机使用，也没有经过验证的精度或帧率数据。
 
-候选数据以 GitHub Release 资产提供：[下载 Roboflow v1 YOLOv8 ZIP](https://github.com/Dengjingm/delta-force-detector/releases/download/dataset-roboflow-v1/delta-force-roboflow-v1-yolov8.zip)。文件 SHA-256 为 `e9413acedd9d789ee0f7e15412126af27cd32ef7e3bda0770f08b090c0d5f634`，许可为 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)，原始项目为 [Delta Force Dataset](https://universe.roboflow.com/yolov11-hs6o5/delta-force-wtowy)。该数据仅作候选输入，不能直接接入单类训练配置。
+候选数据以 GitHub Release 资产提供：[下载 Roboflow v1 YOLOv8 ZIP](https://github.com/Dengjingm/yolo-research/releases/download/dataset-roboflow-v1/roboflow-yolo-candidate-v1.zip)。文件 SHA-256 为 `e9413acedd9d789ee0f7e15412126af27cd32ef7e3bda0770f08b090c0d5f634`，许可为 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。该数据仅作 YOLO 研究候选输入，类别为 `head` / `person`，不能直接接入单类训练配置。
 
-另有独立发布的 [Ultralytics Platform 合并候选集](https://platform.ultralytics.com/hello-n/datasets/delta-force-mergedyolov8)：14,820 张、22,481 个框，类别仍为 `head` / `person`。其 [Ultralytics 合并候选集 ZIP](https://github.com/Dengjingm/delta-force-detector/releases/download/dataset-ultralytics-merged-20260914/delta-force-ultralytics-merged-20260914-yolov8.zip) 与上面的 Roboflow v1 Release 分开，SHA-256 为 `ebcc1cc6648738e157f1173f57e7e7f546f9616907bd32081522f47ff916d4a1`。源页面标记 `No license`，该 Release 仅作候选数据留档且不授予使用或再分发权；使用前须确认授权。完整下载与静态检查证据见 [PROGRESS.md](PROGRESS.md)。
+另有独立发布的 Ultralytics Platform 公开 YOLO 合并候选集：14,820 张、22,481 个框，类别仍为 `head` / `person`。其 [Ultralytics 合并候选集 ZIP](https://github.com/Dengjingm/yolo-research/releases/download/dataset-ultralytics-merged-20260914/ultralytics-yolo-candidate-20260914.zip) 与上面的 Roboflow v1 Release 分开，SHA-256 为 `ebcc1cc6648738e157f1173f57e7e7f546f9616907bd32081522f47ff916d4a1`。源页面标记 `No license`，该 Release 仅作候选数据留档且不授予使用或再分发权；使用前须确认授权。完整下载与静态检查证据见 [PROGRESS.md](PROGRESS.md)。
 
 ## 文档导航
 
@@ -18,9 +18,9 @@
 
 ## 检测范围与目标设备
 
-唯一类别为 `0: enemy`，覆盖近、中、远距离可确认的敌方干员。远距离小目标是重点；P2 和更高输入分辨率只是候选策略，效果须通过数据与真机测量确认。
+唯一类别为 `0: enemy`，覆盖近、中、远距离可确认的检测目标。远距离小目标是重点；P2 和更高输入分辨率只是候选策略，效果须通过数据与真机测量确认。
 
-首台设备由用户指定为红米 K70：第二代骁龙 8、12GB + 4GB 扩展内存、3200×1440 屏幕。用户计划后续 root，Android/HyperOS 版本和实际游戏截图分辨率待记录。构建配置最低 API 28（Android 9），不代表已验证全部 Android 9+ 设备。
+首台设备由用户指定为红米 K70：第二代骁龙 8、12GB + 4GB 扩展内存、3200×1440 屏幕。用户计划后续 root，Android/HyperOS 版本和实际采集/截图分辨率待记录。构建配置最低 API 28（Android 9），不代表已验证全部 Android 9+ 设备。
 
 ## 架构与现有入口
 
@@ -47,11 +47,11 @@ Android 当前是带 `MainActivity` 诊断入口的 APK 工程，已有 Gradle W
 cd training
 python -m pip install -r requirements.txt
 python train.py
-python export_tflite.py --weights runs/hok_detector/weights/best.pt
+python export_tflite.py --weights runs/yolo_research/weights/best.pt
 python visualize.py --dir data/images/train
 ```
 
-当前训练目录名仍为 `hok_detector`；后续统一为 `delta_enemy` 是待办。`visualize.py` 的标签目录计算存在错误，修复前不能用于确认标注完整性。导出脚本尚未可靠定位并复制产物到 `android-app/app/src/main/assets/model.tflite`。
+当前训练目录名为 `yolo_research`。`visualize.py` 的标签目录计算存在错误，修复前不能用于确认标注完整性。导出脚本尚未可靠定位并复制产物到 `android-app/app/src/main/assets/model.tflite`。
 
 Native 入口是 `cd native-daemon` 后运行 `./build.sh`，需要 Android NDK 和 CMake；arm64 交叉编译已经通过。脚本仍将构建、资源复制和发现设备后的 adb 推送绑在一起，构建与部署分离仍待实现。Android 可由 Android Studio 打开 `android-app/`，也可使用仓库中的 Gradle Wrapper；debug APK 已构建通过，尚未真机安装验收。
 
@@ -67,7 +67,7 @@ ScreenVisionSDK.observe().collect { results ->
 ScreenVisionSDK.stop(context)
 ```
 
-`observe()` 返回 `SharedFlow<List<DetectResult>>`；`elementId` 是类别名称，不是跟踪 ID。root `tap()` / `swipe()` 是独立 API，检测流程当前不会自动调用。
+`observe()` 返回 `SharedFlow<List<DetectResult>>`；`elementId` 是类别名称，不是跟踪 ID。root `tap()` / `swipe()` 是独立 API。`start(..., moveCenter=true)` 时，屏幕中心会朝最近检测目标移动。
 
 ## 后续推进顺序
 

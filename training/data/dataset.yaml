@@ -1,6 +1,6 @@
-# 三角洲行动 (Delta Force) 敌方干员检测 — 数据集配置
-# 目标：检测任意距离的敌方干员，含极远距离（小目标）
-# 标注所有可见的敌方干员，无论大小
+# YOLO 研究 — 单类 enemy 检测数据集配置
+# 目标：检测任意距离的 enemy，含极远距离（小目标）
+# 标注所有可见的 enemy，无论大小
 
 path: ./data
 train: images/train
@@ -9,4 +9,4 @@ val: images/val
 nc: 1
 
 names:
-  0: enemy              # 敌方干员（近/中/远距离）
+  0: enemy              # 检测目标（近/中/远距离）

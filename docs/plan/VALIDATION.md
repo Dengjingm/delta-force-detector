@@ -8,7 +8,7 @@
 |---|---|---|
 | L0 文档/静态 | 链接、接口一致性、语法/静态编译问题 | 训练、APK、真机或精度通过 |
 | L1 host测试 | 纯Python/Kotlin/C的协议、标签、坐标、状态、文件事务 | Android权限、GPU驱动、root截图可用 |
-| L2 构建与模型探针 | NDK/Gradle构建、真实导出和runtime加载 | 游戏目标识别准确、持续15fps |
+| L2 构建与模型探针 | NDK/Gradle构建、真实导出和runtime加载 | 检测精度达标、持续15fps |
 | L3 K70离线/诊断 | 本地图片CPU/GPU、root低频截图、SDK恢复 | 实时性能或全距离精度达标 |
 | L4 独立测试集/持续运行 | 固定精度门槛、REALTIME有效帧率与帧龄 | 未覆盖ROM/设备同样兼容 |
 
@@ -100,7 +100,7 @@
 | SDK12 | 杀App进程后保留daemon，再显式start | 用C08旧owner身份精准清理并新建会话；旧App仍活着/身份不同则BUSY，不永久卡死也不接管其他实例 |
 | SDK13 | 截图能力/配置失败与无结构化记录的突然崩溃 | 完整FAILED记录按C06准确分类；仅无记录崩溃才DAEMON_EXITED；stdout逐行有界且持续被读 |
 | SDK10 | 未root K70选择图片、CPU/GPU离线推理 | 可返回该图坐标/后端/耗时；不调用su、不伪造live帧、不要求截图权限 |
-| SDK11 | 显式tap/swipe，非法坐标/未root | 只响应调用方显式请求；域外坐标拒绝；检测帧本身不触发操作 |
+| SDK11 | 显式tap/swipe，非法坐标/未root | 显式 tap/swipe 只响应调用方请求，域外坐标拒绝；`moveCenter` 需显式开启 |
 | UPDATE01 | 无update配置、不可达服务器 | 本地正常启动；无占位请求，无阻塞检测 |
 | UPDATE02 | 合法新模型+sidecar | 两文件完整校验，stage不改变active；activate核验/预热后原子提交 |
 | UPDATE03 | HTTP错误、超时、超大小、hash错、错schema/modelVersion | 拒绝候选，旧active未改变，暂存可清理 |

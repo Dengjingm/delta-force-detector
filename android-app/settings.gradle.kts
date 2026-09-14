@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "HonorOfKingsDetector"
+rootProject.name = "yolo-research"
 include(":app")

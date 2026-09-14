@@ -3,20 +3,24 @@
 把 Roboflow 候选数据(head / person)重映射为单类 enemy,并重组到标准目录。
 
 MVP 语义简化:head(0) 与 person(1) 全部合并为 enemy(0)。
-这不等价于「敌方干员」的最终语义复核,仅用于跑通训练管线并产出首个权重。
+这不等价于「enemy」的最终语义复核,仅用于跑通训练管线并产出首个权重。
 正式语义规则(队友/尸体/遮挡/不确定小点)需后续复核后回填。
 
-输入(解压后的 Roboflow YOLOv8 导出):
-    training/data/incoming/<root>/{train,valid,test}/{images,labels}
+输入支持两种 YOLO 导出布局:
+    Roboflow:    training/data/incoming/<root>/{train,valid,test}/{images,labels}
+    Ultralytics: training/data/incoming/<root>/{images,labels}/{train,val,test}
+
+可用 --root 指定 incoming 下的某一套候选集;不指定时取 incoming 中最浅的 data.yaml。
 
 输出:
     training/data/images/{train,val,test}
     training/data/labels/{train,val,test}
 
 映射:
-    train -> train, valid -> val, test -> test(保留独立测试,dataset.yaml 不引用 test)
+    train -> train, valid/val -> val, test -> test(保留独立测试,dataset.yaml 不引用 test)
     class_id 任意 -> 0 (enemy)
 """
+import argparse
 import os
 import shutil
 import sys
@@ -26,7 +30,8 @@ ROOT = Path(__file__).resolve().parent
 INCOMING = ROOT / "data" / "incoming"
 DATA = ROOT / "data"
 
-SPLIT_MAP = {"train": "train", "valid": "val", "test": "test"}
+# 源划分名 -> 输出划分名。valid 与 val 视为同一划分。
+SPLIT_MAP = {"train": "train", "valid": "val", "val": "val", "test": "test"}
 
 
 def find_dataset_root() -> Path:
@@ -39,7 +44,7 @@ def find_dataset_root() -> Path:
         return sorted(candidates, key=lambda p: len(p.parts))[0]
 
     for p in INCOMING.rglob("*"):
-        if p.is_dir() and (p / "train").is_dir():
+        if p.is_dir() and ((p / "train").is_dir() or (p / "images" / "train").is_dir()):
             candidates.append(p)
     if candidates:
         return sorted(candidates, key=lambda p: len(p.parts))[0]
@@ -47,15 +52,31 @@ def find_dataset_root() -> Path:
     raise SystemExit(f"未在 {INCOMING} 找到数据集根目录(缺 data.yaml 或 train/)")
 
 
+def _split_aliases(src_split: str) -> tuple[str, ...]:
+    if src_split in ("valid", "val"):
+        return ("val", "valid", "Val", "Valid")
+    return (src_split, src_split.capitalize())
+
+
 def locate_split_dirs(root: Path):
-    """返回 {split_name: (images_dir, labels_dir)}。支持 {split}/images 与 {split}/labels 结构。"""
+    """返回 {输出划分: (images_dir, labels_dir)}。
+
+    支持 Roboflow `{split}/images` 与 Ultralytics `images/{split}` 两种布局。
+    """
     out = {}
-    for src_split, _dst in SPLIT_MAP.items():
-        for split_dir in (root / src_split, root / src_split.capitalize()):
-            img = split_dir / "images"
-            lbl = split_dir / "labels"
-            if img.is_dir() and lbl.is_dir():
-                out[src_split] = (img, lbl)
+    for src_split, dst_split in SPLIT_MAP.items():
+        if dst_split in out:
+            continue
+        for name in _split_aliases(src_split):
+            robo_img = root / name / "images"
+            robo_lbl = root / name / "labels"
+            if robo_img.is_dir() and robo_lbl.is_dir():
+                out[dst_split] = (robo_img, robo_lbl)
+                break
+            ultra_img = root / "images" / name
+            ultra_lbl = root / "labels" / name
+            if ultra_img.is_dir() and ultra_lbl.is_dir():
+                out[dst_split] = (ultra_img, ultra_lbl)
                 break
     return out
 
@@ -89,18 +110,28 @@ def link_or_copy(src: Path, dst: Path) -> None:
 
 
 def main() -> int:
-    root = find_dataset_root()
+    parser = argparse.ArgumentParser(description="重映射候选 YOLO 数据为单类 enemy")
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="incoming 下某一套候选集根目录;默认自动寻找最浅的 data.yaml",
+    )
+    args = parser.parse_args()
+    root = args.root.resolve() if args.root else find_dataset_root()
+    if not root.is_dir():
+        raise SystemExit(f"数据集根目录不存在: {root}")
     print(f"[INFO] 数据集根目录: {root}")
     splits = locate_split_dirs(root)
-    if not splits:
-        raise SystemExit(f"未在 {root} 找到 train/valid 的 images+labels 结构")
+    if "train" not in splits:
+        raise SystemExit(f"未在 {root} 找到 train 的 images+labels 结构")
 
     total_img = 0
-    for src_split, dst_split in SPLIT_MAP.items():
-        if src_split not in splits:
-            print(f"[WARN] 缺少 {src_split} 划分,跳过")
+    for dst_split in ("train", "val", "test"):
+        if dst_split not in splits:
+            print(f"[WARN] 缺少 {dst_split} 划分,跳过")
             continue
-        img_src, lbl_src = splits[src_split]
+        img_src, lbl_src = splits[dst_split]
         img_dst = DATA / "images" / dst_split
         lbl_dst = DATA / "labels" / dst_split
 
@@ -117,7 +148,7 @@ def main() -> int:
                 print(f"  [WARN] 图片无标签: {img.name}")
             count += 1
         total_img += count
-        print(f"[OK] {src_split} -> {dst_split}: {count} 张")
+        print(f"[OK] {img_src} -> {dst_split}: {count} 张")
 
     print(f"\n[INFO] 完成,共处理 {total_img} 张图片")
     print(f"[INFO] 输出: {DATA / 'images'}, {DATA / 'labels'}")

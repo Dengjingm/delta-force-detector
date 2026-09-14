@@ -52,7 +52,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--weights",
         type=str,
-        default="runs/hok_detector/weights/best.pt",
+        default="runs/yolo_research/weights/best.pt",
         help="训练好的 PyTorch 权重路径",
     )
     parser.add_argument(

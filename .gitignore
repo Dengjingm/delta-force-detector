@@ -1,11 +1,12 @@
 # Training
+venv-training/
+training/.venv/
 training/__pycache__/
 training/runs/
+training/*.pt
 training/data/incoming/
-training/data/images/train/*.jpg
-training/data/images/train/*.png
-training/data/images/val/
-training/data/labels/val/
+training/data/images/
+training/data/labels/
 *.pyc
 
 # Native daemon build

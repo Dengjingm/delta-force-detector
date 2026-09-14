@@ -7,6 +7,7 @@
 
     <application
         android:name=".VisionApp"
+        android:label="yolo-research"
         android:allowBackup="false"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">

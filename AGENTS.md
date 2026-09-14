@@ -2,7 +2,7 @@
 
 ## 项目目标与协作边界
 
-Delta Force（三角洲行动）敌方干员视觉检测原型。在 root Android 设备上采集画面，检测单类 `enemy`，返回屏幕中心坐标和置信度。当前训练候选为 YOLOv8s-P2、960×960 输入，15fps 是待验证目标。
+YOLO 研究原型：在 root Android 设备上采集画面，用 YOLOv8 检测单类 `enemy`，返回屏幕中心坐标和置信度。当前训练候选为 YOLOv8s-P2、960×960 输入，15fps 是待验证目标。
 
 按用户当次明确范围开展工作：文档审查任务只修改文档，发现代码问题先记录到 `PROGRESS.md`，不据此自动扩展为代码实现。后续收到实现任务，再按计划推进对应里程碑。
 
@@ -20,7 +20,7 @@ Delta Force（三角洲行动）敌方干员视觉检测原型。在 root Androi
 - 当前是未完成集成的脚手架。训练、Native、Android 的主要文件存在，但没有端到端验收记录；已发现的编译和接口问题见 PROGRESS。
 - `training/data/incoming/` 中已有两套隔离候选数据：Roboflow v1 原图集，以及从 Ultralytics Platform 公开 API 下载的 14,820 张合并集。两者原始类别均为 `head` / `person`；合并集没有许可证声明，且 416/640 方形图片包含原图、裁剪图和空标注图片。它们尚未按本项目 `enemy` 语义复核，也没有来源对局分组证据；不能直接作为正式训练集。仓库仍没有批准的单类训练数据、训练权重、TFLite 资产、自动化测试或 CI；Gradle Wrapper 与 M1 构建入口已经落地。
 - 用户指定首台验证设备：**红米 K70、第二代骁龙 8、最高 3.19GHz、12GB 内存 + 4GB 扩展内存、3200×1440 屏幕**。这些是用户提供的信息，未做真机核验。
-- 用户计划稍后 root。Android 版本、HyperOS/ROM 版本、root 方案、实际游戏渲染/截图分辨率仍待记录；不能假定已 root、adb 已连接或 SurfaceFlinger/GPU 兼容。
+- 用户计划稍后 root。Android 版本、HyperOS/ROM 版本、root 方案、实际采集/截图分辨率仍待记录；不能假定已 root、adb 已连接或 SurfaceFlinger/GPU 兼容。
 - 构建配置 `minSdk=28` 对应 Android 9，`targetSdk=34`；这只是配置，不是 API 28+ 全版本兼容证明。扩展内存不等同于额外物理 RAM，也不构成性能保证。
 
 ## 模块职责
@@ -38,13 +38,13 @@ Delta Force（三角洲行动）敌方干员视觉检测原型。在 root Androi
 ## 数据与模型约定
 
 - 唯一类别 `0: enemy`，YOLO 标签为 `class_id cx cy w h`，坐标相对于原始截图归一化到 0–1，宽高必须大于 0。类别变更必须同步 `dataset.yaml`、Service 默认类别、调用方类别及模型元数据。
-- 标注所有能可靠确认的可见敌方干员，包括远处 5–10px 小目标。先定义队友、遮挡、倒地、尸体和不确定小点的处理规则；无法判断的目标进入复核，不强行猜标。
+- 标注所有能可靠确认的可见 `enemy` 目标，包括远处 5–10px 小目标。先定义队友、遮挡、倒地、尸体和不确定小点的处理规则；无法判断的目标进入复核，不强行猜标。
 - 数据采集同时覆盖距离、地图、光照、运动模糊、敌人数和困难负样本。按对局或连续视频片段划分 train/val/test，避免相邻帧泄漏；保留独立测试集与数据版本。
 - 200 张可作为采集起点，1000+ 是后续规模方向，不是精度验收门槛。采集数量、标注质量与实际远距召回分开报告。
 - 保留当前 `nms=True`、默认 fp16 的导出方向；任何 NMS 策略变化必须同时修改导出和端上解析并提供一致性证据。内置 NMS 输出不能再按旧式 raw/objectness 布局解释。
 - 以**真实导出模型**检查的 shape、dtype、量化参数、布局、坐标单位、类别和 NMS 状态为准。不能靠固定维度猜类别数；fp16 权重不代表 fp16 输入，int8 选项也不代表端上已兼容量化 I/O。
 - 目标模型包和元数据已经在CONTRACTS C02定稿，开发时直接按该合同实现，并随模型保存版本化元数据。验证 PyTorch、TFLite、Android 对同组截图的结果；导出脚本应消费实际返回路径，不能靠猜文件名定位产物。
-- 当前训练保存与导出默认路径仍是 `training/runs/hok_detector/weights/best.pt`。以后改为 `delta_enemy` 时同时修改两个脚本和使用说明。
+- 当前训练保存与导出默认路径是 `training/runs/yolo_research/weights/best.pt`。更改该名称时同时修改训练脚本、导出默认权重路径和使用说明。
 
 ## 帧、坐标与生命周期约定
 
@@ -76,7 +76,7 @@ bash -n native-daemon/build.sh
 cd training
 python -m pip install -r requirements.txt
 python train.py
-python export_tflite.py --weights runs/hok_detector/weights/best.pt
+python export_tflite.py --weights runs/yolo_research/weights/best.pt
 python visualize.py --dir data/images/train
 ```
 

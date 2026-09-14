@@ -4,7 +4,7 @@
 
 ## 1. 交付目标与设备边界
 
-首版交付可以独立安装的演示 APK，随后从验收通过的实现拆出 AAR。APK 提供模型检查、离线截图检测、显式启动/停止实时检测和诊断信息；SDK 输出原始采集帧上的框、中心坐标、置信度及帧时间，不自动点击、不自动滑动、不自动执行瞄准或射击动作。
+首版交付可以独立安装的演示 APK，随后从验收通过的实现拆出 AAR。APK 提供模型检查、离线截图检测、显式启动/停止实时检测和诊断信息；SDK 输出原始采集帧上的框、中心坐标、置信度及帧时间。可选的屏幕中心移动由 `moveCenter` 显式开启。
 
 首台设备为用户提供的 Redmi K70、Snapdragon 8 Gen 2、3200×1440、12 GB 物理内存 + 4 GB 扩展内存。root 后续进行。Android API、ROM/HyperOS、root 实现、实际显示/游戏/截图分辨率、GPU delegate 兼容性必须由设备探测记录确认。扩展内存不计作额外物理 RAM；型号不等于 15 fps 或持续运行温度已经达标。
 
@@ -46,7 +46,7 @@
 
 ## 3. 公开 API 与数据模型
 
-下列 Kotlin 是目标签名示意，需在实现阶段变成编译通过的声明。当前原型尚无对外发布的稳定二进制；新版 `start/stop` 和结果类型需要迁移示例与文档。现有 `tap/swipe` 保留为独立显式调用，不由任何检测回调触发。
+下列 Kotlin 是目标签名示意，需在实现阶段变成编译通过的声明。当前原型尚无对外发布的稳定二进制；新版 `start/stop` 和结果类型需要迁移示例与文档。`tap/swipe` 仍是调用方显式 API；`moveCenter` 开启时由 ScreenCenterController 根据检测结果移动屏幕中心。
 
 ```kotlin
 object ScreenVisionSDK {
@@ -278,8 +278,8 @@ SDK 生成每会话唯一的 32 hex token，只使用校验后的参数构造 su
 - 启动即显示模型、运行状态、profile 及必要的未就绪说明。没有模型时显示“待导入 model.tflite 与 model.tflite.json”，不崩溃、不请求 root。
 - “检查环境”：默认本地模型/API检查；用户显式选择 root 探测才执行 su。
 - “离线检测截图”：系统文件选择器选图，不申请广泛存储权限；按合同检查尺寸，若存在 EXIF 方向则只规范化一次，输出坐标相对于界面展示的该规范化原图，报告其宽高。显示框、中心、模型版本、实际后端和耗时。离线结果只属于该图，不注入实时 frames/snapshot，不伪造 captureStartNs。
-- “开始实时检测”：显示选定 profile 后显式 start；“停止”等待真实清理结果。实时详情只展示状态和最近有效结果，过期即清空，不在本轮设计完整游戏悬浮层。
-- 运行实时会话时离线 analyzeImage 返回 BUSY，避免第二个 Interpreter 与游戏争抢资源；离线作业取消由其 worker 安全退出。Activity 生命周期用 lifecycle-aware collect，重建不重启引擎。
+- “开始实时检测”：显示选定 profile 后显式 start；“停止”等待真实清理结果。实时详情只展示状态和最近有效结果，过期即清空，不在本轮设计完整悬浮层。
+- 运行实时会话时离线 analyzeImage 返回 BUSY，避免第二个 Interpreter 争抢资源；离线作业取消由其 worker 安全退出。Activity 生命周期用 lifecycle-aware collect，重建不重启引擎。
 
 采集配置通过C08校准工具生成；App增加“导入采集配置”入口，验证profile/evidence的hash、设备fingerprint与backendBuildId后落入私有runtime/capture-profiles，candidate不进入正式live。
 
@@ -323,7 +323,7 @@ live 激活在帧边界进入 STARTING、清 latestFrame 并暂停旧模型的�
 
 CI 第一层执行纯逻辑测试、Android 编译/lint 和 APK 资产契约检查；第二层模拟器执行无 root 的启动、缺资产反馈、离线图像、Binder/生命周期测试；第三层为人工触发的 K70 真机作业，运行 root、GPU、连续采集和性能验收。云模拟器不能证明 K70 GPU/root 可用。
 
-CI 不自动部署到用户手机、不申请 su、不点击游戏。版本产物包含 APK/AAR、构建环境清单、模型/daemon SHA、测试报告及性能数据位置。缺数据/模型的 job 明确 SKIPPED 并列依赖；不能把跳过记为通过。
+CI 不自动部署到用户手机、不申请 su、不向设备注入输入。版本产物包含 APK/AAR、构建环境清单、模型/daemon SHA、测试报告及性能数据位置。缺数据/模型的 job 明确 SKIPPED 并列依赖；不能把跳过记为通过。
 
 ## 13. 文件级任务拆分
 
