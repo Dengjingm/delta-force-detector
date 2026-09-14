@@ -148,3 +148,23 @@
 | `DetectionService`/`SDK`/`MainActivity` | Service 用 `detector.inputSize` 驱动预处理、发布 ResultBus、驱动 ScreenCenterController；`SDK.start(moveCenter=...)`、`observe()=ResultBus.results`；MainActivity 增屏幕中心移动按钮 | assembleDebug 通过 |
 
 本轮构建：`build.sh`（NDK r26d arm64）产出 `screen-visiond`（36K）；`gradle -p android-app :app:assembleDebug` 通过。剩余未验证项：真实截图 raw 格式、真实模型输出张量、root 触控方向与延迟；`input swipe` 每步新建 su 进程。
+
+## 视角平滑与真实多模态输入调研（2026-09-14）
+
+新增 `docs/research/VIEW_CONTROL_RESEARCH.md`，将视角控制研究拆为统一时钟/坐标、真实传感器状态估计、用户意图融合、受约束平滑和可复现实验四层。文档纠正了“Fitts 定律直接导出 S 型速度曲线”的表述，以 minimum-jerk 作为点到点运动基线，并明确不采用伪造触控/IMU、人工噪声、随机过冲或以规避检测为目标的评估。
+
+本轮只修改文档，未修改 `center/` 源码、未构建、未做真机或用户研究。后续实现从 R1 事件 schema、时间同步和标定工具开始；当前检测驱动的 root `input swipe` 仍是已知现状，不作为新研究方案的集成基线。
+
+## 多模态时空一致性诊断基线（2026-09-14）
+
+新增 `motion/MotionSamples.kt`、`ConsistencyModels.kt` 与 `MultimodalConsistencyAnalyzer.kt`，开始实现研究 R1/R2 的纯逻辑切片。分析器校验单调时钟、接收延迟、会话与屏幕变换代，在相机观测区间内累计真实触控并梯形积分真实陀螺仪，输出视角残差、方向一致性、峰值角速度/角加速度以及可解释 finding。非有限数值、乱序或跨 generation 数据明确返回 `INDETERMINATE`，不与异常行为混为一类。
+
+随后新增线程安全的 `SlidingWindowConsistencyEngine`、Android `MotionDiagnosticsSession` 与 MainActivity 诊断入口。Session 使用真实 `TYPE_GYROSCOPE`、当前 Activity 收到的单一活动 pointerId 及历史触控点，完成 uptime→elapsed-realtime 时钟换算；多指按 pointerId 隔离，屏幕变换代改变时清空窗口。实际视角必须由自有渲染器或获授权遥测显式提交，采集器不会从输入反推并伪造观测。
+
+现有 JVM 测试扩展为 8 项，新增滑动窗口延迟出报告和容量上界检查。使用临时 JDK 17 与 Android SDK 34 执行 `./gradlew :app:testDebugUnitTest :app:assembleDebug`，41 个 Gradle task 成功，8 项测试全部通过、失败/跳过均为 0，产出约 9.0 MiB 的 `app-debug.apk`。构建仍有既存的 TFLite namespace、`aaptOptions` 弃用和 ModelUpdater 未使用参数警告；本轮未做真机传感器、触控时钟或标定验证，也未接线上判罚。
+
+## 应用内双模态交互仿真引擎（2026-09-14）
+
+新增 `simulation/`：`ImuPhysicsSynthesizer` 实现可复现高斯噪声、每轴 8–12Hz 微震、minimum-jerk S 曲线、5%–15% 带符号轴耦合及速度/加速度逐采样限幅；`TouchPathSynthesizer` 实现随机受限控制点的三阶贝塞尔轨迹，并按解析速度对 Pressure、Size、TouchMajor/TouchMinor 做对数调整；`SpatiotemporalConsistencyCoordinator` 实现粗细通道 smoothstep 拆分、死区滞回和原始物理陀螺仪权重；`InteractiveSimulationEngine` 统一生成时空对齐的双通道 trace。
+
+`InAppMotionEventDispatcher` 只对调用方提供的本进程 View 按真实相对时间回放，并提供取消句柄；未调用系统 InputManager、UiAutomation、root、HAL 或内核接口，IMU 仅作为内存样本输出。MainActivity 新增 `SimulationPadView` 与显式演示按钮，可观察轨迹及 Touch/IMU 样本数，Activity 销毁时取消回放。新增 5 项仿真测试，验证 seed 复现性、角速度/角加速度上限、单轴耦合、触控端点/属性、双通道守恒与死区滞回。连同 motion 测试共 13 项全部通过；`testDebugUnitTest` 与 `assembleDebug` 再次通过。Pad 的真实时间调度与 MotionEvent 字段仍待真机/仪器化测试。

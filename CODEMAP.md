@@ -15,6 +15,8 @@
 | v2 帧协议编解码 | [frame_protocol.c](native-daemon/frame_protocol.c)、[frame_protocol.h](native-daemon/frame_protocol.h)、[contracts/fixtures](contracts/fixtures/README.md) | 64 字节 LE 头、校验、黄金字节；尚未接入 socket_server |
 | 生命周期与结果订阅 | [ScreenVisionSDK.kt](android-app/app/src/main/java/com/screen/vision/api/ScreenVisionSDK.kt)、[DetectionService.kt](android-app/app/src/main/java/com/screen/vision/service/DetectionService.kt)、[ResultBus.kt](android-app/app/src/main/java/com/screen/vision/api/ResultBus.kt) | Manifest、daemon 就绪与退出、结果通路 |
 | 屏幕中心移动 | [ScreenCenterController.kt](android-app/app/src/main/java/com/screen/vision/center/ScreenCenterController.kt)、[TouchInjector.kt](android-app/app/src/main/java/com/screen/vision/center/TouchInjector.kt)、[ScreenCenterConfig.kt](android-app/app/src/main/java/com/screen/vision/center/ScreenCenterConfig.kt) | 目标选择、注入方向/灵敏度、DetectionService 接入 |
+| 多模态一致性诊断 | [MultimodalConsistencyAnalyzer.kt](android-app/app/src/main/java/com/screen/vision/motion/MultimodalConsistencyAnalyzer.kt)、[SlidingWindowConsistencyEngine.kt](android-app/app/src/main/java/com/screen/vision/motion/SlidingWindowConsistencyEngine.kt)、[MotionDiagnosticsSession.kt](android-app/app/src/main/java/com/screen/vision/motion/MotionDiagnosticsSession.kt) | 真实触控/IMU/独立相机观测、设备标定、时间与坐标 generation |
+| 应用内双模态仿真 | [InteractiveSimulationEngine.kt](android-app/app/src/main/java/com/screen/vision/simulation/InteractiveSimulationEngine.kt)、[ImuPhysicsSynthesizer.kt](android-app/app/src/main/java/com/screen/vision/simulation/ImuPhysicsSynthesizer.kt)、[TouchPathSynthesizer.kt](android-app/app/src/main/java/com/screen/vision/simulation/TouchPathSynthesizer.kt) | 确定性配置/seed、自有 View 回放、与系统输入和传感器隔离 |
 | 坐标与置信度 | [Preprocessor.kt](android-app/app/src/main/java/com/screen/vision/detection/Preprocessor.kt)、[PostProcessor.kt](android-app/app/src/main/java/com/screen/vision/detection/PostProcessor.kt) | 模型输出单位、DetectResult、原图尺寸 |
 | 模型更新 | [ModelUpdater.kt](android-app/app/src/main/java/com/screen/vision/update/ModelUpdater.kt) | SDK 选择路径、detector 加载方式、回滚 |
 | 构建与打包 | [CMakeLists.txt](native-daemon/CMakeLists.txt)、[build.sh](native-daemon/build.sh)、[app/build.gradle.kts](android-app/app/build.gradle.kts) | 根 Gradle 配置、NDK、二进制资源路径 |
@@ -30,6 +32,7 @@
 ├── CODEMAP.md                        本文件：代码、调用链、当前契约
 ├── IMPLEMENTATION_PLAN.md            完整目标规格入口（待实现）
 ├── docs/plan/                        CONTRACTS/TRAINING/NATIVE/ANDROID/TASKS/VALIDATION
+├── docs/research/                    独立研究方案；不代表现有实现
 ├── README.md                         项目入口与当前使用条件
 ├── PROGRESS.md                       建设评估、缺陷、里程碑与验证记录
 ├── .gitignore                        数据与构建产物忽略规则（尚不完整）
@@ -70,7 +73,7 @@
             ├── res/raw/screen_visiond  arm64 daemon 二进制（NDK 交叉编译产物）
             └── java/com/screen/vision/
                 ├── VisionApp.kt                 仅保存 Application 实例
-                ├── MainActivity.kt              诊断入口：状态、启动/停止、屏幕中心移动开关
+                ├── MainActivity.kt              诊断入口：检测控制、真实触控/陀螺仪诊断状态
                 ├── api/ScreenVisionSDK.kt       start(moveCenter) / observe / tap / swipe / stop
                 ├── api/ResultBus.kt             进程级结果总线（Service→SDK/屏幕中心移动）
                 ├── service/DetectionService.kt  收帧、推理、发布 ResultBus、驱动屏幕中心移动
@@ -80,6 +83,17 @@
                 ├── center/ScreenCenterConfig.kt 屏幕中心移动参数
                 ├── center/TouchInjector.kt      root input swipe 注入
                 ├── center/ScreenCenterController.kt 目标选择、增益+死区+步长、节拍注入
+                ├── motion/MotionSamples.kt      真实触控/陀螺仪/相机事件与设备标定模型
+                ├── motion/ConsistencyModels.kt  诊断配置、finding、指标与报告
+                ├── motion/MultimodalConsistencyAnalyzer.kt 窗口对齐、积分、残差与运动学诊断
+                ├── motion/SlidingWindowConsistencyEngine.kt 线程安全、有界的三通道滑动窗口
+                ├── motion/MotionDiagnosticsSession.kt Activity触控与硬件陀螺仪实时采集
+                ├── simulation/InteractiveSimulationEngine.kt 双通道仿真统一入口
+                ├── simulation/ImuPhysicsSynthesizer.kt S曲线、噪声、微震、耦合与运动学限幅
+                ├── simulation/TouchPathSynthesizer.kt 贝塞尔轨迹与动态接触属性
+                ├── simulation/SpatiotemporalConsistencyCoordinator.kt 粗细通道、死区与Alpha协调
+                ├── simulation/InAppMotionEventDispatcher.kt 仅向本进程指定View实时回放
+                ├── simulation/SimulationPadView.kt Activity内自有触控回放画布
                 ├── socket/UnixSocketClient.kt   读满帧头和像素，创建 Bitmap
                 ├── update/ModelUpdater.kt       查询版本、下载缓存
                 └── model/DetectResult.kt        elementId / x / y / confidence
@@ -185,3 +199,7 @@ Gradle Wrapper（8.7）与 `MainActivity` 诊断入口已落地，debug APK 可�
 新增/移动模块时更新文件树与“首先阅读”表；改接口时更新调用链和契约。地图描述当前代码，拟建接口维护在 [CONTRACTS.md](docs/plan/CONTRACTS.md) 和模块规格中，任务与验收分别维护在TASKS/VALIDATION；PROGRESS只记录实际进展。缺陷修复并验证后，再把这里的断点描述改为实际行为，避免文档提前宣布完成。
 
 规划已定稿但未实现的主要变化：带sidecar的NMS模型包、六态VisionSnapshot、双运行profile、校准配置导入、精确daemon所有权和原子模型更新。64字节v2帧头的编解码/校验（C 端 `frame_protocol.c/.h` + 黄金 fixture）已按 T07/T08-C 落地并通过 host 测试，但尚未接入 `socket_server.c`/Kotlin 接收端，线上仍为旧 v1 协议；不得把目标规格直接改写为本图的现有行为。
+
+视角控制的后续研究入口为 [VIEW_CONTROL_RESEARCH.md](docs/research/VIEW_CONTROL_RESEARCH.md)。`motion/` 已实现离线分析、有界滑动窗口、Activity 触控和硬件陀螺仪采集；独立视角观测须由自有渲染器或获授权遥测调用 `submitViewOrientation` 提交。该能力不读取其他 App 触控，不把当前 `center/` 的检测驱动 root 输入注入视为研究基线。
+
+应用内仿真引擎见 [INTERACTIVE_SIMULATION_ENGINE.md](docs/research/INTERACTIVE_SIMULATION_ENGINE.md)。`simulation/` 只生成内存样本并向调用方传入的本进程 View 回放；它未连接 `center/`、DetectionService、系统 InputManager、UiAutomation、root 或传感器 HAL。

@@ -71,6 +71,12 @@ ScreenVisionSDK.stop(context)
 
 ## 后续推进顺序
 
+视角控制相关研究已单独整理为 [智能视角平滑控制与真实多模态输入融合调研方案](docs/research/VIEW_CONTROL_RESEARCH.md)。该方案以真实输入、用户显式选择、可复现实验和安全降级为边界；当前 `center/` 的检测驱动 root 输入注入不作为后续优化基线。
+
+诊断 App 现可显式启动真实触控/陀螺仪采集并显示缓冲状态；一致性报告还需要自有渲染器或获授权遥测通过 `MotionDiagnosticsSession.submitViewOrientation` 提交独立视角姿态。界面中的像素角度映射是管线演示值，不是 K70 标定结果。
+
+[双模态交互仿真测试引擎](docs/research/INTERACTIVE_SIMULATION_ENGINE.md)可生成带运动学限幅、可配置噪声/微震/轴耦合的 IMU 轨迹，以及带动态接触属性的贝塞尔触控轨迹。回放范围限定为应用自己传入的 View；IMU 样本供实验代码和离线断言消费，不注入 Android 系统传感器。
+
 先补可复现构建、数据规则和模型契约；用少量样例验证 Python/TFLite/Android 离线一致性。设备 root 后打通正确截图、Socket 和 SDK 生命周期，再建立训练效果与 K70 持续性能基线。模型热更新、多机型适配和高帧率截图后置。
 
 当前缺陷证据见 [PROGRESS.md](PROGRESS.md)；完整目标设计从 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 进入，开发验收按 [VALIDATION.md](docs/plan/VALIDATION.md) 执行。
