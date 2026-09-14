@@ -4,7 +4,7 @@
 
 ## 1. 范围与入口
 
-目标是 root Android 上的单类 `enemy` 检测，训练候选为 YOLOv8s-P2 / 960 输入，检测目标为 15fps。当前只有隔离的 Roboflow `head` / `person` 候选数据，尚无批准的单类训练数据、权重、TFLite 资产或端到端运行记录。
+目标是 root Android 上的单类 `enemy` 检测，训练候选为 YOLOv8s-P2 / 960 输入，检测目标为 15fps。当前有两套隔离的 `head` / `person` 候选数据（Roboflow v1 原图集和 Ultralytics Platform 合并集），尚无批准的单类训练数据、权重、TFLite 资产或端到端运行记录。
 
 | 要处理的任务 | 首先阅读 | 同步检查 |
 |---|---|---|
@@ -41,8 +41,11 @@
 │   ├── requirements.txt              Python 依赖下限，未锁定环境
 │   └── data/
 │       ├── dataset.yaml              nc=1, names={0: enemy}
-│       └── incoming/roboflow-hello-n-delta-force-wtowy-gq2n9-v1-yolov8/
-│                                      已忽略的候选 ZIP 与原样解压数据；head/person，待复核
+│       └── incoming/                    Git 忽略的候选数据区
+│           ├── roboflow-hello-n-delta-force-wtowy-gq2n9-v1-yolov8/
+│           │                            候选 ZIP 与原样解压数据；head/person，待复核
+│           └── ultralytics-hello-n-delta-force-mergedyolov8-2026-09-14/
+│                                        公开 API 下载的 YOLO 候选集；14,820 张，待复核
 ├── native-daemon/
 │   ├── main.c                        进程入口、30fps 目标循环、信号与统计
 │   ├── screencap.c / screencap.h      截图后端与 FrameBuffer

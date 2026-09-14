@@ -1,6 +1,6 @@
 # 建设评估与后续计划
 
-更新日期：2026-09-14。审查基线：`ab93f11`；当前已完成 T07/T08 的 v2 帧协议黄金 fixture 与 C 端编解码 host 测试、M1 可复现构建，并下载和隔离检查 Roboflow 候选数据。v2 尚未接入 socket 传输，候选数据尚未接入单类训练。完整开发方案入口为 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)；实施顺序见 [TASKS.md](docs/plan/TASKS.md)，合同与验收分别见 [CONTRACTS](docs/plan/CONTRACTS.md) / [VALIDATION](docs/plan/VALIDATION.md)。
+更新日期：2026-09-14。审查基线：`ab93f11`；当前已完成 T07/T08 的 v2 帧协议黄金 fixture 与 C 端编解码 host 测试、M1 可复现构建，并下载和隔离检查 Roboflow v1 与 Ultralytics Platform 合并候选数据。v2 尚未接入 socket 传输，候选数据尚未接入单类训练。完整开发方案入口为 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)；实施顺序见 [TASKS.md](docs/plan/TASKS.md)，合同与验收分别见 [CONTRACTS](docs/plan/CONTRACTS.md) / [VALIDATION](docs/plan/VALIDATION.md)。
 
 **结论：模块划分可以保留，但当前仍是未连通的原型脚手架。后续应从“先采集并完整训练，再编译联调”调整为“先建立构建与模型契约基线，数据建设并行；离线验证通过后接入 root 截图，再验收精度和持续性能”。**
 
@@ -11,7 +11,7 @@
 | 建设面 | 已存在 | 尚未完成 / 验证 |
 |---|---|---|
 | 文档与导航 | 现状四文档已统一，另有完整主规划、跨端合同、三模块规格、26项任务和验收规格 | 后续实现变化时持续维护 |
-| 数据与训练 | 单类 YAML、训练/可视化脚本；隔离的 Roboflow v1 候选数据 | 候选数据的 `enemy` 语义复核、来源分组与独立划分；模型加载、训练记录 |
+| 数据与训练 | 单类 YAML、训练/可视化脚本；隔离的 Roboflow v1 与 Ultralytics 合并候选数据 | 候选数据的许可证确认、`enemy` 语义复核、来源分组与独立划分；模型加载、训练记录 |
 | 模型导出 | TFLite / fp16 / int8 / NMS 导出入口 | 实际产物、环境锁定、tensor 契约、跨引擎一致性 |
 | Native | 主循环、两种截图代码分支、Socket、构建脚本 | 编译、正确截图、完整写入、可靠断连与退出 |
 | Android | SDK、Service、预处理、推理、后处理、下载骨架 | 编译、启动入口、权限、Binder/Flow、模型加载与生命周期 |
@@ -121,9 +121,13 @@
 | 候选数据结构与标签静态检查 | train/valid/test 为 1246/357/180 张，图片与标签一一配对；3272 个框均为合法五列 YOLO 坐标；类别计数 `head=1227`、`person=2045` | 原始图像与标注文件配对完整；没有缺标、孤儿标签或非法坐标行 |
 | 候选 `data.yaml` 路径检查 | 导出文件写入 `../train/images`、`../valid/images`、`../test/images`，按 YAML 所在目录解析均不存在 | 保留原文件作为来源证据；正式接入时须生成项目自己的配置，不能直接使用该 YAML |
 | 候选图片解码、尺寸和精确重复检查 | 1783 张 JPEG 全部由 `djpeg` 解码通过；1782 张为 3840×2160，1 张为 3840×2100；无相同 SHA-256 图片及跨 split 精确重复 | 文件未见损坏或字节级重复；不能排除近邻帧泄漏 |
+| Ultralytics `hello-n/delta-force-mergedyolov8` 下载 | 通过公开数据集与图片 API 分 3 页取得 14,820 条完整索引并下载全部 JPEG；本地图片总计 748,968,200 bytes，下载失败 0；索引 SHA-256 `16f6189f42f8ac85f1ea05994910db0150a785e2a7e5e79abae1a0146f69937d` | 已取得第二套隔离候选数据，并按用户要求以独立 GitHub Release 留档；页面标记 `No license`，该发布不等同于获得使用或再分发授权，也不能直接作为正式训练集 |
+| Ultralytics 合并候选结构与标签检查 | train/val/test 为 11,192/3,109/519 张，图片与标签一一配对；11,131 张有标注、3,689 张为空标签；22,481 个框合法，`head=10,535`、`person=11,946`；跨 split 内容 hash 重复 0；抽样 120 张 JPEG 解码失败 0 | API 数量、字节数、类别和划分与平台一致；无非法坐标，但来源分组和近邻帧泄漏仍未证明 |
+| Ultralytics 独立归档 | ZIP 为 769,492,828 bytes，SHA-256 `ebcc1cc6648738e157f1173f57e7e7f546f9616907bd32081522f47ff916d4a1`；`unzip -t` 无错误；使用标签 `dataset-ultralytics-merged-20260914`，与既有 `dataset-roboflow-v1` 分离 | Release 是候选数据快照；源页面无许可证声明，使用前仍须确认授权 |
+| 两套候选关系与尺寸比较 | Ultralytics 合并集包含旧 Roboflow v1 的全部 1,783 个原始文件名 stem，另含更多来源与裁剪变体；9,766 张为 416×416、5,053 张为 640×640、1 张为 641×640，旧集则为 3840×2160/2100 | 合并集规模更大且含裁剪图，但像素分辨率更低；“更清晰”不能由原图分辨率支持，须按目标像素与标注质量抽样复核 |
 | 文档路径、链接、状态与差异检查 | 11份Markdown的文件链接、标题锚点、JSON样例、代码围栏、26项任务依赖无环及 `git diff --check` 通过 | 本次提交候选数据忽略规则并同步状态文档；CLAUDE 符号链接保留，源码问题仍待修复 |
 
-候选数据位于被 Git 忽略的 `training/data/incoming/roboflow-hello-n-delta-force-wtowy-gq2n9-v1-yolov8/`，保留原 ZIP 和原样解压内容。它的标签是 `head` / `person`，所有图片均有正框，缺少已确认空帧；来源对局分组未知，原 70/20/10 划分不能作为无泄漏证据。在完成敌我语义复核、困难负样本补充和按对局重划分前，不接入单类 `dataset.yaml`，B07/B10 与 M2 保持未完成。
+候选数据均位于被 Git 忽略的 `training/data/incoming/`。Roboflow v1 目录保留原 ZIP 和原样解压内容；Ultralytics 合并集目录保存 API 索引、下载报告及 YOLO `images/labels/{train,val,test}`。两套标签都是 `head` / `person`，来源对局分组未知，平台原划分不能作为无泄漏证据；合并集还缺少许可证声明。在完成许可确认、敌我语义复核、空标注语义确认和按对局重划分前，不接入单类 `dataset.yaml`，B07/B10 与 M2 保持未完成。
 
 本轮新增源码：`contracts/fixtures/`（生成器+bin+manifest+README）、`native-daemon/frame_protocol.{c,h}`、`native-daemon/tests/test_frame_protocol.c`；M1 另增 `android-app/gradlew` + `gradle/wrapper/`、`MainActivity.kt`、`res/raw/screen_visiond`（arm64 二进制）。已产出 `native-daemon/build/screen-visiond` 与 `android-app/app/build/outputs/apk/debug/app-debug.apk`；未生成训练权重、模型或真机记录；ASan 因本机缺 `libclang_rt.asan` 运行库未跑（UBSan 已跑）。
 
