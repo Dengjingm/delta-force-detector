@@ -42,6 +42,7 @@ class MotionDiagnosticsSession(
             this,
             gyroscope,
             SensorManager.SENSOR_DELAY_GAME,
+            mainHandler,
         )
         publishState(force = true)
         return running
@@ -138,9 +139,18 @@ class MotionDiagnosticsSession(
 
     override fun onSensorChanged(event: SensorEvent) {
         if (!running || event.sensor.type != Sensor.TYPE_GYROSCOPE || event.values.size < 3) return
+        val receiveTimeNs = SystemClock.elapsedRealtimeNanos()
+        // 部分 ROM 的 SensorEvent.timestamp 与 elapsedRealtime 不在同一时钟域；
+        // 偏差过大时改用接收时刻，避免样本被滑动窗口立刻裁掉。
+        val sourceTimeNs =
+            if (kotlin.math.abs(event.timestamp - receiveTimeNs) <= MAX_SENSOR_CLOCK_SKEW_NS) {
+                event.timestamp
+            } else {
+                receiveTimeNs
+            }
         engine.addGyro(
             GyroSample(
-                stamp = monotonicStamp(event.timestamp, SystemClock.elapsedRealtimeNanos()),
+                stamp = monotonicStamp(sourceTimeNs, receiveTimeNs),
                 velocity = AngularVelocity(event.values[0], event.values[1], event.values[2]),
             ),
         )
@@ -176,6 +186,7 @@ class MotionDiagnosticsSession(
     companion object {
         private const val NANOS_PER_MILLISECOND = 1_000_000L
         private const val UI_UPDATE_INTERVAL_NS = 100_000_000L
+        private const val MAX_SENSOR_CLOCK_SKEW_NS = 2_000_000_000L
     }
 }
 

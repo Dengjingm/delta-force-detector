@@ -152,11 +152,13 @@ int main(void) {
         return 1;
     }
     LOGI("Screencap initialized");
+    (void)input_inject_init();
 
     /* ── 初始化 Socket Server ───────────────────── */
     int server_fd = socket_server_init(SOCKET_PATH);
     if (server_fd < 0) {
         LOGE("Failed to create socket server");
+        input_inject_release();
         screencap_release();
         return 1;
     }
@@ -264,6 +266,7 @@ cleanup:
     control_server_close(g_ctrl_server_fd);
     unlink(CTRL_SOCKET_PATH);
 
+    input_inject_release();
     screencap_release();
     LOGI("screen-visiond daemon exited cleanly");
     return 0;

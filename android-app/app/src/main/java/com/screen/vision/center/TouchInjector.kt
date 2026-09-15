@@ -6,8 +6,7 @@ import android.util.Log
  * root 触控注入：连续按住手势。
  *
  * acquire 注入 DOWN，moveBy 按绝对坐标注入 MOVE，release 注入 UP。
- * 每次调用仍会新起一个 su 进程；这是过渡实现，后续替换为 daemon 内 uinput
- * 以消除逐事件进程 spawn 的延迟。
+ * 仅在 daemon 控制通道不可用时作为回退；每事件仍会新起 su 进程。
  */
 class TouchInjector : AimInjector {
 

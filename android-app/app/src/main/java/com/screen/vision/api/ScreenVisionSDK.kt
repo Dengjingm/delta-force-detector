@@ -6,18 +6,20 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
 import android.util.Log
+import com.screen.vision.R
 import com.screen.vision.model.DetectResult
 import com.screen.vision.service.DetectionService
 import com.screen.vision.update.ModelUpdater
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import java.io.File
 
 /**
  * ScreenVisionSDK — 屏幕元素实时定位 API。
  *
  * 使用方式:
  * ```kotlin
- * ScreenVisionSDK.start(context, listOf("enemy"))
+ * ScreenVisionSDK.start(context, listOf("enemy"), moveCenter = true)
  * ScreenVisionSDK.observe().collect { results -> ... }
  * ScreenVisionSDK.tap(x, y)
  * ScreenVisionSDK.stop(context)
@@ -31,11 +33,13 @@ object ScreenVisionSDK {
 
     @Volatile
     private var isStarted = false
+    @Volatile
+    private var startGeneration = 0
     private var serviceIntent: Intent? = null
     private var _classNames: List<String> = emptyList()
 
     /**
-     * 启动检测引擎。
+     * 启动检测引擎。前台服务独立于界面，切到其他应用后仍采集整屏并注入。
      *
      * @param context   Application context
      * @param classNames 类别名称列表，顺序必须与训练时的 dataset.yaml 一致
@@ -46,32 +50,48 @@ object ScreenVisionSDK {
         if (isStarted) return
         isStarted = true
         _classNames = classNames
+        val app = context.applicationContext
+        val generation = ++startGeneration
 
-        launchDaemon()
+        scope.launch(Dispatchers.IO) { launchDaemon(app) }
 
         scope.launch {
-            val updater = ModelUpdater(context)
+            val updater = ModelUpdater(app)
             updater.checkAndUpdate(onResult = { _, _ -> })
         }
 
-        serviceIntent = Intent(context, DetectionService::class.java).apply {
+        serviceIntent = Intent(app, DetectionService::class.java).apply {
             putExtra(DetectionService.EXTRA_CLASS_NAMES, classNames.toTypedArray())
             putExtra(DetectionService.EXTRA_MODEL_PATH, modelPath)
             putExtra(DetectionService.EXTRA_MOVE_CENTER, moveCenter)
+            putExtra(DetectionService.EXTRA_START_GENERATION, generation)
         }
-        context.startForegroundService(serviceIntent!!)
+        app.startForegroundService(serviceIntent!!)
 
         scope.launch {
             delay(500)
-            bridgeResults(context)
+            bridgeResults(app)
         }
 
-        Log.i(TAG, "Started with ${classNames.size} classes: $classNames")
+        Log.i(TAG, "Started with ${classNames.size} classes: $classNames moveCenter=$moveCenter")
     }
 
-    private fun launchDaemon() {
+    /** 把 APK 内的 daemon 解到 /data/local/tmp 并后台拉起，不绑在 App 界面生命周期上。 */
+    private fun launchDaemon(context: Context) {
         try {
-            Runtime.getRuntime().exec(arrayOf("su", "-c", "/data/local/tmp/screen-visiond"))
+            val staged = File(context.filesDir, "screen-visiond")
+            context.resources.openRawResource(R.raw.screen_visiond).use { input ->
+                staged.outputStream().use { output -> input.copyTo(output) }
+            }
+            staged.setReadable(true, false)
+            staged.setExecutable(true, false)
+            val stagedPath = staged.absolutePath
+            val cmd = "cp '$stagedPath' /data/local/tmp/screen-visiond" +
+                " && chmod 755 /data/local/tmp/screen-visiond" +
+                " && (nohup /data/local/tmp/screen-visiond >/dev/null 2>&1 &)"
+            val p = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+            val code = p.waitFor()
+            if (code != 0) Log.e(TAG, "Daemon install/launch exited $code")
         } catch (e: Exception) {
             Log.e(TAG, "Daemon launch failed: ${e.message}")
         }
@@ -110,12 +130,21 @@ object ScreenVisionSDK {
 
     fun stop(context: Context) {
         if (!isStarted) return
-        try { context.unbindService(serviceConnection) } catch (_: Exception) { }
-        serviceIntent?.let { context.stopService(it) }
+        startGeneration++
+        val app = context.applicationContext
+        try { app.unbindService(serviceConnection) } catch (_: Exception) { }
+        serviceIntent?.let { app.stopService(it) }
         serviceIntent = null
         isStarted = false
         try { Runtime.getRuntime().exec(arrayOf("su", "-c", "killall screen-visiond")) } catch (_: Exception) { }
         Log.i(TAG, "Stopped")
+    }
+
+    /** Service 自行退出时清标志；若用户已经重新 start，则忽略旧实例。 */
+    fun notifyServiceStopped(generation: Int) {
+        if (generation != startGeneration) return
+        isStarted = false
+        serviceIntent = null
     }
 
     fun isRunning(): Boolean = isStarted

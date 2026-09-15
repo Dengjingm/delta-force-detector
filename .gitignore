@@ -3,10 +3,16 @@ venv-training/
 training/.venv/
 training/__pycache__/
 training/runs/
+training/snapshots/
+training/eval-mid/
+training/exports/
 training/*.pt
+training/*.log
 training/data/incoming/
 training/data/images/
 training/data/labels/
+training/data/head_body/images/
+training/data/head_body/labels/
 *.pyc
 
 # Native daemon build
@@ -19,6 +25,7 @@ native-daemon/obj/
 android-app/.gradle/
 android-app/build/
 android-app/app/build/
+android-app/app/src/main/assets/*.tflite
 android-app/local.properties
 *.iml
 .idea/

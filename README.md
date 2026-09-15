@@ -2,11 +2,9 @@
 
 目标是在 root Android 设备上做 YOLOv8 单类检测实验，返回屏幕中心坐标和置信度。当前聚焦单类 `enemy`，训练候选为 YOLOv8s-P2、960×960 输入，15fps 为待验证目标。
 
-**当前状态：可构建的原型脚手架，尚未跑通检测。** M1 已生成 arm64 daemon 和 debug APK，v2 帧协议 C 端已有 host 测试；本地已隔离下载 Roboflow v1 与 Ultralytics Platform 合并候选数据，两者类别均为 `head` / `person`。候选数据尚未按 `enemy` 语义复核，合并集也没有许可证声明；模型产物不存在，运行链路仍有接口不匹配，当前不能直接训练后装机使用，也没有经过验证的精度或帧率数据。
+**当前状态：可构建的原型脚手架，尚未跑通检测。** M1 已生成 arm64 daemon 和 debug APK，v2 帧协议 C 端已有 host 测试。本地只用 Ultralytics Platform 合并候选集（14,820 张，`head` / `person` 分开存放）；Roboflow v1 本地副本已删除。候选数据尚未按项目语义复核，合并集也没有许可证声明。
 
-候选数据以 GitHub Release 资产提供：[下载 Roboflow v1 YOLOv8 ZIP](https://github.com/Dengjingm/yolo-research/releases/download/dataset-roboflow-v1/roboflow-yolo-candidate-v1.zip)。文件 SHA-256 为 `e9413acedd9d789ee0f7e15412126af27cd32ef7e3bda0770f08b090c0d5f634`，许可为 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。该数据仅作 YOLO 研究候选输入，类别为 `head` / `person`，不能直接接入单类训练配置。
-
-另有独立发布的 Ultralytics Platform 公开 YOLO 合并候选集：14,820 张、22,481 个框，类别仍为 `head` / `person`。其 [Ultralytics 合并候选集 ZIP](https://github.com/Dengjingm/yolo-research/releases/download/dataset-ultralytics-merged-20260914/ultralytics-yolo-candidate-20260914.zip) 与上面的 Roboflow v1 Release 分开，SHA-256 为 `ebcc1cc6648738e157f1173f57e7e7f546f9616907bd32081522f47ff916d4a1`。源页面标记 `No license`，该 Release 仅作候选数据留档且不授予使用或再分发权；使用前须确认授权。完整下载与静态检查证据见 [PROGRESS.md](PROGRESS.md)。
+Ultralytics Platform 公开 YOLO 合并候选集：14,820 张、22,481 个框，类别为 `head` / `person`。[ZIP](https://github.com/Dengjingm/yolo-research/releases/download/dataset-ultralytics-merged-20260914/ultralytics-yolo-candidate-20260914.zip) SHA-256 为 `ebcc1cc6648738e157f1173f57e7e7f546f9616907bd32081522f47ff916d4a1`。源页面标记 `No license`，该 Release 仅作候选数据留档且不授予使用或再分发权；使用前须确认授权。完整下载与静态检查证据见 [PROGRESS.md](PROGRESS.md)。
 
 ## 文档导航
 

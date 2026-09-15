@@ -42,8 +42,10 @@ android {
 }
 
 dependencies {
-    // TFLite 推理引擎（M1 采用 XNNPACK CPU；GPU delegate 留待 M3 重加）
+    // TFLite：GPU delegate 优先，失败回退 XNNPACK CPU；创建/推理/关闭同线程
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.14.0")
 
     // Kotlin 协程
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")

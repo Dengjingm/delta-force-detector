@@ -1,6 +1,6 @@
 # 建设评估与后续计划
 
-更新日期：2026-09-14。审查基线：`ab93f11`；当前已完成 T07/T08 的 v2 帧协议黄金 fixture 与 C 端编解码 host 测试、M1 可复现构建，并下载和隔离检查 Roboflow v1 与 Ultralytics Platform 合并候选数据。v2 尚未接入 socket 传输，候选数据尚未接入单类训练。完整开发方案入口为 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)；实施顺序见 [TASKS.md](docs/plan/TASKS.md)，合同与验收分别见 [CONTRACTS](docs/plan/CONTRACTS.md) / [VALIDATION](docs/plan/VALIDATION.md)。
+更新日期：2026-09-16。审查基线：`ab93f11`。2026-09-16 按用户要求删除 `android-app-noroot/`，后续只开发 Root 版 `android-app/`（daemon 截图 + su/uinput，不使用无障碍）。当前已完成 T07/T08 的 v2 帧协议黄金 fixture 与 C 端编解码 host 测试、M1 可复现构建，并下载和隔离检查 Roboflow v1 与 Ultralytics Platform 合并候选数据。v2 尚未接入 socket 传输，候选数据尚未接入单类训练。完整开发方案入口为 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)；实施顺序见 [TASKS.md](docs/plan/TASKS.md)，合同与验收分别见 [CONTRACTS](docs/plan/CONTRACTS.md) / [VALIDATION](docs/plan/VALIDATION.md)。
 
 **结论：模块划分可以保留，但当前仍是未连通的原型脚手架。后续应从“先采集并完整训练，再编译联调”调整为“先建立构建与模型契约基线，数据建设并行；离线验证通过后接入 root 截图，再验收精度和持续性能”。**
 
@@ -168,3 +168,71 @@
 新增 `simulation/`：`ImuPhysicsSynthesizer` 实现可复现高斯噪声、每轴 8–12Hz 微震、minimum-jerk S 曲线、5%–15% 带符号轴耦合及速度/加速度逐采样限幅；`TouchPathSynthesizer` 实现随机受限控制点的三阶贝塞尔轨迹，并按解析速度对 Pressure、Size、TouchMajor/TouchMinor 做对数调整；`SpatiotemporalConsistencyCoordinator` 实现粗细通道 smoothstep 拆分、死区滞回和原始物理陀螺仪权重；`InteractiveSimulationEngine` 统一生成时空对齐的双通道 trace。
 
 `InAppMotionEventDispatcher` 只对调用方提供的本进程 View 按真实相对时间回放，并提供取消句柄；未调用系统 InputManager、UiAutomation、root、HAL 或内核接口，IMU 仅作为内存样本输出。MainActivity 新增 `SimulationPadView` 与显式演示按钮，可观察轨迹及 Touch/IMU 样本数，Activity 销毁时取消回放。新增 5 项仿真测试，验证 seed 复现性、角速度/角加速度上限、单轴耦合、触控端点/属性、双通道守恒与死区滞回。连同 motion 测试共 13 项全部通过；`testDebugUnitTest` 与 `assembleDebug` 再次通过。Pad 的真实时间调度与 MotionEvent 字段仍待真机/仪器化测试。
+
+## 大小框获取偏好（2026-09-15）
+
+`ScreenCenterController` 获取锁定时：先选离屏幕中心最近的检测，若存在头/身体配对（小框中心在大框内且面积 ≤ 50%），按 `preferSmallBoxProbability`（默认 0.8）抽一次跟小框或大框；只有大框则跟大框。粘滞跟踪不再重抽。校准页可调该百分比。
+
+## 演示 APK 打开即后台全屏检测（2026-09-15）
+
+用户明确要求：切到其他应用后仍采集并移动中心；只在本 App 界面检测没有意义。演示 `MainActivity` 打开后自动 `SDK.start(moveCenter=true)` 拉起前台服务；daemon 从 `res/raw/screen_visiond` 解包并以 `nohup` 后台运行；连接失败短重试后 `stopSelf`。SDK `start/stop` 仍是显式 API，停止按钮仍可关掉。未做真机：Root 授权、HyperOS 后台杀进程、游戏画面截图与注入。
+
+## 应用内图片测试台（2026-09-15）
+
+`ImageTestActivity` 用系统选图（`ACTION_GET_CONTENT`，不申请读相册权限）加载本地图片，走同一套 `YOLODetector`/`Preprocessor`/`PostProcessor`，再用 `ScreenCenterController` + `VirtualReticleInjector` 模拟镜头平移，把锁定目标送到画面中心十字下。不注入系统触控、不需要 Root。`virtualCameraPanBringsLockedTargetOntoScreenCenter` 覆盖步进收敛。未做真机选图/推理验收。
+
+## 无 Root 副本（已删除，2026-09-16）
+
+按用户要求整目录删除 `android-app-noroot/`。下面几节只保留当时证据，不再作为实现入口。后续瞄准与精校只改 Root 版。
+
+## 无 Root 副本（2026-09-15，历史）
+
+按用户要求不改现有 `android-app/`，复制为 `android-app-noroot/`。采集改 MediaProjection，注入改无障碍 `continueStroke`，包名 `com.screen.vision.noroot` 可与 Root 版并存。不调用 su、不部署 daemon。host 构建 `assembleDebug`；K70 录屏授权、FLAG_SECURE 黑屏、无障碍手势是否被游戏接收均未测。
+
+用户反馈无 Root 检测间隔大、视角拖得慢。原因是 VirtualDisplay 按整屏分辨率拷图（K70 约 3200×1440，每帧约 18MB）再 LetterBox 到模型输入，检测循环还额外 sleep 到 15fps；无障碍每笔 40ms 且必须等 `onCompleted`。已改为最长边 416 采集（实测 Ultralytics 合并集 14820 张中 9766 张为 416×416、5053 张为 640×640；当前 train 11192 张中 7691 张为 416），去掉 15fps 限速、手势按时长随位移变化，并把采集坐标映射到屏幕像素。模型仍按 TFLite 实际输入 640 LetterBox。无 Root 检测改为 last.pt（训练约 epoch 56，val mAP50≈0.935）float32 无 NMS TFLite。工程侧：NMS 坏记录不再整帧丢弃；raw 坐标自动区分 0–1 / 像素；默认阈值 0.20（0.12 误检太多）。GPU：GLES3/Vulkan 即尝试 delegate，CompatibilityList 误报 false 不再直接跳过；失败才 CPU。未打包。每次运行写 `filesDir/logs/detect-session.log`，主界面可查看。滑动精校现为一次按钮自动执行 8 个双轴阶段，全部通过后才写入水平/垂直增益与方向；失败停住，不自动重试。未在 K70 靶场实测。
+
+## 延迟优化（2026-09-15，不含换模型）
+
+按用户体感慢的反馈，实现缓冲复用、采集/模型尺寸对齐、GPU 回退、检测与注入解耦、手势时长收紧、Root 去掉 15fps 限速，以及 daemon uinput。**未更换 YOLOv8s 权重或输入尺寸。**
+
+| 项 | 改动 | 验证 |
+|---|---|---|
+| Preprocessor | 复用 640 画布、像素数组、RGB float 缓冲和输入 ByteBuffer | 随单元测试/assembleDebug |
+| YOLODetector | 输出缓冲复用；`HandlerThread` 上 AUTO GPU，失败同线程 CPU；invoke 失败再重建 CPU | host 构建；K70 GPU 未测 |
+| 无 Root 采集 | VirtualDisplay 最长边 416→640，与 TFLite 输入对齐 | `fitLongSide` 单测：3200×1440→640×288 |
+| 无 Root 手势 | 20 px/ms、上限 70 ms、丢失回调 watchdog 80 ms | `gestureDurationMs` 单测 |
+| 检测/注入 | 瞄准走 `LatestSlot`，不再占用推理协程 | 代码审查 |
+| Root 消费 | 去掉检测循环 15 fps `sleep` | 代码审查 |
+| daemon 注入 | `/dev/uinput` 虚拟触控，失败回退 `exec input` | 本机无 NDK，未交叉编译；C 源码已改 |
+
+模型仍为 epoch29 YOLOv8s / 640 TFLite。K70 上 `[STATS]` 平均耗时、GPU 是否真正启用、uinput 是否被系统当成触控，均未测。
+
+## 无 Root 一键全轴精校（2026-09-15）
+
+在先前“自动测量经常失败或像卡住”的可靠性修复上，把原有单次水平精校升级为一次按钮完成 8 阶段双轴测量。固定顺序为左120→右120→上120→下120→左64→右64→上64→下64。首次 K70 试包把独立的按下—移动—抬手错误地套用了瞄准 `continueStroke` 的 16ms 时序，用户实测游戏画面完全不动；现改为已有实测基础的慢速完整滑程，120px 用 480ms、64px 按同速率用 256ms。每阶段重新取得 before/after 新帧，位移匹配按当前主轴放开搜索、限制正交轴。
+
+`GainCalibrationSequence` 在内存聚合 8 个样本：每轴至少 4 个有效值，`invert` 至少 3/4 一致，正反方向与大小幅度相对差均不超过 20%，正交位移中位比例不超过 15%，配对回中残差不超过 15%。任一阶段取消、派发失败、无新帧、低纹理、尺寸变化、数值或聚合不一致都会整次失败；每阶段 4 秒 watchdog，整次上限 40 秒，关闭浮层会取消会话，不自动重试且不写部分配置。只有全部通过后才调用一次配置更新，原子替换 `sensitivity/sensitivityY/invertX/invertY`；`deadzonePx/maxStepPx/oneShotMove/associateDistancePx/releaseAfterMisses/preferSmallBoxProbability` 等无法由纯滑动唯一识别的策略字段保持原值。最终浮层显示双轴值、方向与最大偏差，日志保留各阶段证据和完整诊断。
+
+host 验证：`cd android-app-noroot && ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 通过；98 项单元测试为 0 failure/error/skip，lint 为 0 error、18 warning。新增回归覆盖四方向/双幅度规划与浮层避让、完整滑程 480/256ms 时序、大垂直位移伴小水平漂移、错误主轴和低纹理拒识、阶段顺序、方向投票、方向/幅度/耦合/回中阈值、延迟画面反馈不重复下发全量修正，以及镜头移动后沿预期路径保持锁定。K70 已确认首个 16ms 版本不驱动画面；慢速精校包能执行滑动，但随后瞄准仍有准星乱跳，下面记录对应闭环修复。完整精校仍需在静止纹理场景连续运行 5 次；每次应在 40 秒会话上限内结束、无 UI 冻结、失败时无部分配置写入，成功的 X/Y 值各次相对中位数偏差不超过 10%。
+
+## 无 Root 准星闭环抖动修复（2026-09-15）
+
+源码确认有两个独立于灵敏度的抖动放大点。第一，`ScreenCenterController` 每帧输出的是当前完整误差，但 `AccessibilityAimInjector` 在上一笔手势尚未反馈到录屏时会把多帧命令累加，导致同一旧误差成倍过冲；现改为忙时仅保留最新终点，并在控制器侧等待目标产生可见位移，连续 3 帧仍无反馈才允许重试。第二，镜头修正会主动把目标从旧坐标推向画面中心，旧关联却只搜索旧坐标附近，容易丢锁并重新随机选择头框/身体框；现改为沿“修正前位置→预期位置”线段关联，并限制相邻框面积比例，减少跨目标切换。
+
+host 已通过上述单测、lint 和 debug 构建。该修复只消除重复命令累加与错误重锁，不声称已证明 K70 实际稳定；新包仍需验证单目标静止场景是否停止往返过冲，再验证多人/头身双框场景是否保持同一目标。
+
+## 无 Root 瞄准本机自测环境（2026-09-15）
+
+不再每次改控制逻辑都先出包给 K70。本机已安装 Android SDK Platform-Tools 37.0.1、Emulator 37.1.11、`system-images;android-34;google_apis;arm64-v8a`。验证分层：
+
+1. JVM：`AimLoopHarness` 用延迟镜头和“最新命令覆盖”仿真无障碍忙等待，覆盖匹配增益收敛、陈旧帧不叠误差、粘滞锁不被中心诱饵抢走、头/身面积门限、增益偏差不失控。入口 `cd android-app-noroot && ./tools/run-aim-selftest.sh --jvm-only`。
+2. 模拟器：debug `AimRangeActivity` 是已知 0.38 增益的触控靶场；`AimRangeInstrumentedTest` 用 Instrumentation 注入滑动和控制器闭环。Gradle Managed Device 设备名 `pixel5Api34`（本机 AGP 8.2 硬件配置只有 Pixel C/2/3/4/5），命令 `./gradlew :app:pixel5Api34DebugAndroidTest` 或 `./tools/run-aim-selftest.sh`。
+3. K70：只保留 HyperOS、游戏是否吃手势、真实灵敏度和性能。模拟器不能代替这一层。
+
+ADB 路径为 `/Users/jingmindeng/Library/Android/sdk/platform-tools/adb`；当前没有已连接真机。host：`AimLoopHarnessTest` 6 项通过。模拟器：`./gradlew :app:pixel5Api34DebugAndroidTest` 约 2 分钟，`AimRangeInstrumentedTest` 2 项均通过（已知增益滑动反向移动 3.3s、控制器闭环收敛 4.3s）。这只证明官方 API 34 模拟器上的靶场物理和控制器注入，不是 HyperOS/`dispatchGesture`/游戏验收。
+
+JVM 灵敏度扫描（世界真实增益按 K70 水平一次测量 0.38）：双轴都填 0.38 收敛；滑条默认 1.0 对 0.38 会过冲振荡；新号理论值 0.151 不乱跳但偏慢；只改水平 0.38、垂直留 1.0 时水平能对准、垂直误差拉到约 200px。校准页增加「写入 K70 已测 0.38 / 0.38」。垂直仍不是独立测量值，只是当前唯一不发散的对称填法。
+
+## 头/身分开的候选集（2026-09-15）
+
+按用户要求不再把 `head` 和 `person` 合成 `enemy`。`remap_and_prepare.py` 只用 Ultralytics 合并集写出 `training/data/head_body/`：`0=head`、`1=person`。14820 张，框 head=10535、person=11946。Roboflow v1 本地目录已删除。进行中的单类 `data/images`+`data/labels` 和 `dataset.yaml` 未改。端上 last.pt 仍是单类 `[1,5,8400]`；换双类模型前不要改 Service 默认类别。下一轮训练用 `data/head_body/dataset.yaml`。

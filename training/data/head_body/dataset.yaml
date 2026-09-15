@@ -1,0 +1,9 @@
+# head / person 分开，不再合成 enemy。
+# 0: head（头）  1: person（身体）
+path: .
+train: images/train
+val: images/val
+nc: 2
+names:
+  0: head
+  1: person

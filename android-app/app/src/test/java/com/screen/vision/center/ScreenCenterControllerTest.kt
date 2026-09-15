@@ -1,6 +1,7 @@
 package com.screen.vision.center
 
 import com.screen.vision.model.DetectResult
+import kotlin.random.Random
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -155,4 +156,107 @@ class ScreenCenterControllerTest {
         assertEquals(0, injector.acquireCount)
         assertTrue(injector.events.isEmpty())
     }
+
+    @Test
+    fun acquirePrefersSmallBoxWhenPairedAndRollHits() {
+        val injector = RecordingInjector()
+        val controller = ScreenCenterController(
+            injector,
+            ScreenCenterConfig(),
+            ConstRandom(0f),
+        )
+
+        controller.onFrame(listOf(bodyBox(), headBox()), 1000, 1000)
+
+        assertEquals("acquire(500,500)", injector.events.first())
+        assertTrue(injector.events.contains("move(20,-50)"))
+    }
+
+    @Test
+    fun acquireUsesLargeBoxWhenPairedAndRollMisses() {
+        val injector = RecordingInjector()
+        val controller = ScreenCenterController(
+            injector,
+            ScreenCenterConfig(),
+            ConstRandom(0.9f),
+        )
+
+        controller.onFrame(listOf(bodyBox(), headBox()), 1000, 1000)
+
+        assertTrue(injector.events.contains("move(25,25)"))
+    }
+
+    @Test
+    fun acquireUsesOnlyLargeBoxWhenNoSmallPairExists() {
+        val injector = RecordingInjector()
+        val controller = ScreenCenterController(
+            injector,
+            ScreenCenterConfig(),
+            ConstRandom(0f),
+        )
+
+        controller.onFrame(listOf(bodyBox()), 1000, 1000)
+
+        assertTrue(injector.events.contains("move(25,25)"))
+        assertTrue(injector.events.none { it == "move(20,-50)" })
+    }
+
+    @Test
+    fun virtualCameraPanBringsLockedTargetOntoScreenCenter() {
+        val injector = VirtualReticleInjector(500, 500)
+        val controller = ScreenCenterController(
+            injector,
+            ScreenCenterConfig(sensitivity = 1.0f, maxStepPx = 60, deadzonePx = 5),
+        )
+        val origin = det(700, 500)
+        val cx = 500
+        val cy = 500
+
+        repeat(12) {
+            val panX = injector.x - cx
+            val panY = injector.y - cy
+            val shifted = origin.copy(
+                x = origin.x - panX,
+                y = origin.y - panY,
+                x1 = origin.x1 - panX,
+                y1 = origin.y1 - panY,
+                x2 = origin.x2 - panX,
+                y2 = origin.y2 - panY,
+            )
+            controller.onFrame(listOf(shifted), 1000, 1000)
+        }
+
+        val panX = injector.x - cx
+        val panY = injector.y - cy
+        assertEquals(0, origin.x - panX - cx)
+        assertEquals(0, origin.y - panY - cy)
+        assertTrue(injector.holding)
+    }
+
+    private class ConstRandom(private val value: Float) : Random() {
+        override fun nextBits(bitCount: Int): Int = 0
+        override fun nextFloat(): Float = value
+    }
+
+    private fun bodyBox() = DetectResult(
+        elementId = "enemy",
+        x = 525,
+        y = 525,
+        confidence = 0.9f,
+        x1 = 430f,
+        y1 = 430f,
+        x2 = 620f,
+        y2 = 620f,
+    )
+
+    private fun headBox() = DetectResult(
+        elementId = "enemy",
+        x = 520,
+        y = 450,
+        confidence = 0.9f,
+        x1 = 500f,
+        y1 = 430f,
+        x2 = 540f,
+        y2 = 470f,
+    )
 }

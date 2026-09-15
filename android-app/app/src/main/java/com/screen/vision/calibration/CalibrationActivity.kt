@@ -52,40 +52,49 @@ class CalibrationActivity : Activity() {
         root.addView(overlay)
 
         statusText = TextView(this).apply {
-            text = "No detections"
+            text = "暂无检测"
             textSize = 13f
             setTextColor(Color.LTGRAY)
             setPadding(0, 16, 0, 16)
         }
         root.addView(statusText)
 
-        addSeekRow(root, "sensitivity", 1, 30, (config.sensitivity * 10).toInt().coerceIn(1, 30),
+        addSeekRow(root, "灵敏度", 1, 30, (config.sensitivity * 10).toInt().coerceIn(1, 30),
             { v -> "%.1f".format(v / 10f) },
             { cfg, v -> cfg.copy(sensitivity = v / 10f) })
-        addSeekRow(root, "deadzone px", 0, 50, config.deadzonePx,
+        addSeekRow(root, "死区（像素）", 0, 50, config.deadzonePx,
             { v -> "$v" },
             { cfg, v -> cfg.copy(deadzonePx = v) })
-        addSeekRow(root, "max step px", 10, 200, config.maxStepPx,
+        addSeekRow(root, "单步上限（像素）", 10, 200, config.maxStepPx,
             { v -> "$v" },
             { cfg, v -> cfg.copy(maxStepPx = v) })
-        addSeekRow(root, "associate distance px", 10, 200, config.associateDistancePx,
+        addSeekRow(root, "关联距离（像素）", 10, 200, config.associateDistancePx,
             { v -> "$v" },
             { cfg, v -> cfg.copy(associateDistancePx = v) })
-        addSeekRow(root, "release after misses", 1, 20, config.releaseAfterMisses,
+        addSeekRow(root, "丢失几帧后释放", 1, 20, config.releaseAfterMisses,
             { v -> "$v" },
             { cfg, v -> cfg.copy(releaseAfterMisses = v) })
+        addSeekRow(
+            root,
+            "优先小框概率",
+            0,
+            100,
+            (config.preferSmallBoxProbability * 100).toInt().coerceIn(0, 100),
+            { v -> "$v%" },
+            { cfg, v -> cfg.copy(preferSmallBoxProbability = v / 100f) },
+        )
 
-        addSwitchRow(root, "enabled", config.enabled) { cfg, v -> cfg.copy(enabled = v) }
-        addSwitchRow(root, "invert X", config.invertX) { cfg, v -> cfg.copy(invertX = v) }
-        addSwitchRow(root, "invert Y", config.invertY) { cfg, v -> cfg.copy(invertY = v) }
+        addSwitchRow(root, "启用屏幕中心移动", config.enabled) { cfg, v -> cfg.copy(enabled = v) }
+        addSwitchRow(root, "水平反向", config.invertX) { cfg, v -> cfg.copy(invertX = v) }
+        addSwitchRow(root, "垂直反向", config.invertY) { cfg, v -> cfg.copy(invertY = v) }
 
         setContentView(root)
 
         scope.launch {
             ResultBus.results.collect { detections ->
                 overlay.setDetections(detections)
-                statusText.text = if (detections.isEmpty()) "No detections"
-                    else "${detections.size} detection(s)"
+                statusText.text = if (detections.isEmpty()) "暂无检测"
+                    else "检测到 ${detections.size} 个目标"
             }
         }
     }

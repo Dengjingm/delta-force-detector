@@ -44,6 +44,10 @@ class AimConfigStore private constructor(context: Context) {
             invertY = prefs.getBoolean(KEY_INVERT_Y, defaults.invertY),
             associateDistancePx = prefs.getInt(KEY_ASSOCIATE, defaults.associateDistancePx),
             releaseAfterMisses = prefs.getInt(KEY_RELEASE_MISSES, defaults.releaseAfterMisses),
+            preferSmallBoxProbability = prefs.getFloat(
+                KEY_PREFER_SMALL,
+                defaults.preferSmallBoxProbability,
+            ),
             enabled = prefs.getBoolean(KEY_ENABLED, defaults.enabled),
         )
         current.set(c)
@@ -59,6 +63,7 @@ class AimConfigStore private constructor(context: Context) {
             .putBoolean(KEY_INVERT_Y, c.invertY)
             .putInt(KEY_ASSOCIATE, c.associateDistancePx)
             .putInt(KEY_RELEASE_MISSES, c.releaseAfterMisses)
+            .putFloat(KEY_PREFER_SMALL, c.preferSmallBoxProbability)
             .putBoolean(KEY_ENABLED, c.enabled)
             .apply()
     }
@@ -72,6 +77,7 @@ class AimConfigStore private constructor(context: Context) {
         private const val KEY_INVERT_Y = "invert_y"
         private const val KEY_ASSOCIATE = "associate_distance_px"
         private const val KEY_RELEASE_MISSES = "release_after_misses"
+        private const val KEY_PREFER_SMALL = "prefer_small_box_probability"
         private const val KEY_ENABLED = "enabled"
 
         @Volatile

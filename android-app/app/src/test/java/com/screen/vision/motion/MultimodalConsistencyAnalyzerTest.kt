@@ -137,6 +137,20 @@ class MultimodalConsistencyAnalyzerTest {
         assertEquals(3, engine.stats().gyroSamples)
     }
 
+    @Test
+    fun laterTouchDoesNotClearGyroOnItsOwnTimeline() {
+        val engine = SlidingWindowConsistencyEngine(
+            calibration = MotionCalibration(0.001f, 0.001f),
+            windowLengthNs = ms(250),
+        )
+        engine.addGyro(gyro(ms(0), 0f))
+        engine.addGyro(gyro(ms(50), 0f))
+        engine.addTouch(touch(ms(10_000), 0f, TouchPhase.DOWN))
+
+        assertEquals(2, engine.stats().gyroSamples)
+        assertEquals(1, engine.stats().touchSamples)
+    }
+
     private fun touch(timeNs: Long, x: Float, phase: TouchPhase) = TouchSample(
         stamp(timeNs),
         xPx = x,

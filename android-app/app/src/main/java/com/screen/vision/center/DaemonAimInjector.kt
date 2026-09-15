@@ -8,8 +8,7 @@ import com.screen.vision.control.ControlProtocol
 /**
  * daemon 内 input 注入的 [AimInjector] 实现。
  *
- * 经反向控制 socket 发送绝对坐标命令, daemon 顺序同步 exec `input motionevent`。
- * 与 [TouchInjector] 的逐事件 su 进程相比, 消除了多层进程 spawn。
+ * 经反向控制 socket 发送绝对坐标命令, daemon 优先走 uinput，失败再 exec `input motionevent`。
  *
  * 连接/发送失败时置 [isFailed] 并记日志; 上层据此回退 [TouchInjector]。
  */

@@ -16,8 +16,10 @@ def train():
     project_root = Path(__file__).parent
     os.chdir(project_root)
     data_yaml = str(project_root / "data" / "dataset.yaml")
+    # 下一轮双类训练改用 data/head_body/dataset.yaml（0=head 1=person）。
+    # 默认仍指向单类 enemy，避免覆盖进行中的 yolo_research run。
     model_name = str(project_root / "yolov8s.pt")  # MVP: 标准权重(P2 变体不可得,后续对齐)
-    epochs = 50                     # MVP: 先跑通;正式训练再增加
+    epochs = 150                    # 正式默认，与 TRAINING.md 一致；patience=20 可早停
     batch_size = 16
     imgsz = 640                     # MVP: 标准 yolov8s 输入;P2/960 后续对齐
 

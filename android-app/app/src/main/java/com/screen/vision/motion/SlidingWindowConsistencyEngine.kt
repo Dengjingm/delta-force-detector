@@ -26,21 +26,21 @@ class SlidingWindowConsistencyEngine(
     fun addTouch(sample: TouchSample) {
         touch.addLast(sample)
         trimToCapacity(touch)
-        trimByTime(sample.stamp.eventTimeNs)
+        trimChannel(touch) { it.stamp.eventTimeNs }
     }
 
     @Synchronized
     fun addGyro(sample: GyroSample) {
         gyro.addLast(sample)
         trimToCapacity(gyro)
-        trimByTime(sample.stamp.eventTimeNs)
+        trimChannel(gyro) { it.stamp.eventTimeNs }
     }
 
     @Synchronized
     fun addViewAndAnalyze(sample: ViewSample): ConsistencyReport? {
         view.addLast(sample)
         trimToCapacity(view)
-        trimByTime(sample.stamp.eventTimeNs)
+        trimChannel(view) { it.stamp.eventTimeNs }
         if (view.size < 2) return null
         return analyzer.analyze(InteractionWindow(touch.toList(), gyro.toList(), view.toList()))
     }
@@ -55,11 +55,10 @@ class SlidingWindowConsistencyEngine(
         view.clear()
     }
 
-    private fun trimByTime(latestTimeNs: Long) {
-        val cutoffNs = latestTimeNs - windowLengthNs
-        trimBefore(touch, cutoffNs) { it.stamp.eventTimeNs }
-        trimBefore(gyro, cutoffNs) { it.stamp.eventTimeNs }
-        trimBefore(view, cutoffNs) { it.stamp.eventTimeNs }
+    /** 各通道按自己的最新时间裁剪，避免触控/陀螺仪时钟不一致时互相清空。 */
+    private fun <T> trimChannel(queue: ArrayDeque<T>, timeOf: (T) -> Long) {
+        if (queue.isEmpty()) return
+        trimBefore(queue, timeOf(queue.last) - windowLengthNs, timeOf)
     }
 
     private fun <T> trimBefore(queue: ArrayDeque<T>, cutoffNs: Long, timeOf: (T) -> Long) {

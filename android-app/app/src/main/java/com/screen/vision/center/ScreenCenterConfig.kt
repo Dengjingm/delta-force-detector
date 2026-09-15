@@ -18,6 +18,11 @@ data class ScreenCenterConfig(
     val associateDistancePx: Int = 60,
     /** 连续多少帧未匹配到锁定目标后释放并重新获取 */
     val releaseAfterMisses: Int = 5,
+    /**
+     * 同一人同时有小框（头）和大框（身体）时，获取锁定选小框的概率。
+     * 只有大框则始终跟大框。跟踪阶段不再重抽，避免头/身体间跳动。
+     */
+    val preferSmallBoxProbability: Float = 0.8f,
     /** 总开关 */
     val enabled: Boolean = true,
 )

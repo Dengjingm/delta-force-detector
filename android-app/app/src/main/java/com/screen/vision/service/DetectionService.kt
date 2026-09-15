@@ -3,6 +3,7 @@ package com.screen.vision.service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.os.Binder
@@ -11,6 +12,8 @@ import android.os.IBinder
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.screen.vision.MainActivity
+import com.screen.vision.api.ScreenVisionSDK
 import com.screen.vision.center.AimConfigStore
 import com.screen.vision.center.AimInjector
 import com.screen.vision.center.DaemonAimInjector
@@ -21,6 +24,7 @@ import com.screen.vision.api.ResultBus
 import com.screen.vision.detection.PostProcessor
 import com.screen.vision.detection.Preprocessor
 import com.screen.vision.detection.YOLODetector
+import com.screen.vision.model.DetectResult
 import com.screen.vision.socket.ReceivedFrame
 import com.screen.vision.socket.UnixSocketClient
 import com.screen.vision.util.LatestSlot
@@ -45,7 +49,10 @@ class DetectionService : Service() {
     private lateinit var postProcessor: PostProcessor
     private var centerController: ScreenCenterController? = null
     private var aimConfigStore: AimConfigStore? = null
+    private var moveCenterRequested = false
+    private var startGeneration = 0
     private val frameSlot = LatestSlot<ReceivedFrame>()
+    private val aimSlot = LatestSlot<AimFrame>()
     private val readerDone = AtomicBoolean(false)
 
     override fun onCreate() {
@@ -62,22 +69,16 @@ class DetectionService : Service() {
         val classNames = intent?.getStringArrayExtra(EXTRA_CLASS_NAMES)?.toList()
             ?: DEFAULT_CLASS_NAMES.toList()
         val modelPath = intent?.getStringExtra(EXTRA_MODEL_PATH) ?: "model.tflite"
-        val moveCenter = intent?.getBooleanExtra(EXTRA_MOVE_CENTER, false) ?: false
+        moveCenterRequested = intent?.getBooleanExtra(EXTRA_MOVE_CENTER, false) ?: false
+        startGeneration = intent?.getIntExtra(EXTRA_START_GENERATION, 0) ?: 0
 
         if (!initModel(classNames, modelPath)) {
             Log.e(TAG, "Model init failed; aborting start")
             isRunning = false
             ResultBus.publish(emptyList())
+            ScreenVisionSDK.notifyServiceStopped(startGeneration)
             stopSelf()
             return START_NOT_STICKY
-        }
-
-        if (moveCenter) {
-            aimConfigStore = AimConfigStore.get(this)
-            val injector = chooseInjector()
-            val store = aimConfigStore!!
-            centerController = ScreenCenterController(injector, store.get())
-            store.attach(centerController)
         }
 
         scope.launch { runDetectionLoop() }
@@ -88,8 +89,12 @@ class DetectionService : Service() {
         return try {
             detector = YOLODetector(this, modelPath)
             preprocessor = Preprocessor(inputSize = detector.inputSize)
-            postProcessor = PostProcessor(classNames = classNames)
+            postProcessor = PostProcessor(
+                classNames = classNames,
+                outputLayout = detector.outputLayout,
+            )
             modelLoaded = true
+            Log.i(TAG, "Model ready backend=${detector.backend} input=${detector.inputSize}")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Model load failed ($modelPath): ${e.message}")
@@ -110,20 +115,25 @@ class DetectionService : Service() {
     }
 
     private suspend fun runDetectionLoop() {
-        if (!socketClient.connect()) {
+        if (!connectWithRetry()) {
             Log.e(TAG, "Failed to connect to native daemon")
             cleanup()
+            ScreenVisionSDK.notifyServiceStopped(startGeneration)
+            stopSelf()
             return
         }
+        attachCenterControllerIfNeeded()
         Log.i(TAG, "Connected, starting detection loop")
 
         readerDone.set(false)
         scope.launch(Dispatchers.IO) { readLoop() }
+        if (moveCenterRequested) {
+            scope.launch { runAimLoop() }
+        }
 
         var frameCount = 0
         var totalTimeUs = 0L
         var totalFrameAgeUs = 0L
-        val targetFrameTimeNs = 66_666_666L // 15fps
 
         while (scope.isActive) {
             val frameStart = System.nanoTime()
@@ -143,7 +153,9 @@ class DetectionService : Service() {
             val detections = postProcessor.process(rawOutput, preprocessed)
 
             ResultBus.publish(detections)
-            centerController?.onFrame(detections, preprocessed.originalWidth, preprocessed.originalHeight)
+            aimSlot.publish(
+                AimFrame(detections, preprocessed.originalWidth, preprocessed.originalHeight),
+            )
 
             frameCount++
             totalTimeUs += (System.nanoTime() - frameStart) / 1000
@@ -151,15 +163,45 @@ class DetectionService : Service() {
             if (frameCount % 300 == 0) {
                 Log.i(TAG, "[STATS] ${frameCount}f | avg: ${totalTimeUs / frameCount}us | frameAge: ${totalFrameAgeUs / frameCount}us")
             }
-
-            val elapsed = System.nanoTime() - frameStart
-            if (elapsed < targetFrameTimeNs) {
-                val sleepNs = targetFrameTimeNs - elapsed
-                Thread.sleep(sleepNs / 1_000_000, (sleepNs % 1_000_000).toInt())
-            }
         }
 
         cleanup()
+        ScreenVisionSDK.notifyServiceStopped(startGeneration)
+        stopSelf()
+    }
+
+    private suspend fun runAimLoop() {
+        while (scope.isActive) {
+            val frame = aimSlot.take()
+            if (frame == null) {
+                delay(1)
+                continue
+            }
+            try {
+                centerController?.onFrame(frame.detections, frame.width, frame.height)
+            } catch (e: Exception) {
+                Log.e(TAG, "aim frame failed: ${e.message}")
+            }
+        }
+    }
+
+    /** daemon 由 su 异步拉起，首连经常还没 listen，给一段短重试。 */
+    private suspend fun connectWithRetry(): Boolean {
+        repeat(CONNECT_ATTEMPTS) { attempt ->
+            if (socketClient.connect()) return true
+            Log.w(TAG, "Daemon connect attempt ${attempt + 1}/$CONNECT_ATTEMPTS failed")
+            delay(CONNECT_RETRY_MS)
+        }
+        return false
+    }
+
+    private fun attachCenterControllerIfNeeded() {
+        if (!moveCenterRequested || centerController != null) return
+        aimConfigStore = AimConfigStore.get(this)
+        val injector = chooseInjector()
+        val store = aimConfigStore!!
+        centerController = ScreenCenterController(injector, store.get())
+        store.attach(centerController)
     }
 
     /** 阻塞读取 socket 并写入最新帧槽；被替换的旧帧立即回收。 */
@@ -183,6 +225,7 @@ class DetectionService : Service() {
         aimConfigStore = null
         ResultBus.publish(emptyList())
         isRunning = false
+        aimSlot.clear()
         try { socketClient.disconnect() } catch (_: Exception) { }
         if (modelLoaded) {
             try { detector.close() } catch (_: Exception) { }
@@ -194,6 +237,7 @@ class DetectionService : Service() {
 
     override fun onDestroy() {
         isRunning = false
+        ScreenVisionSDK.notifyServiceStopped(startGeneration)
         scope.cancel()
         cleanup()
         super.onDestroy()
@@ -209,14 +253,22 @@ class DetectionService : Service() {
         }
     }
 
-    private fun buildNotification(): Notification =
-        NotificationCompat.Builder(this, CHANNEL_ID)
+    private fun buildNotification(): Notification {
+        val launch = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("yolo-research")
-            .setContentText("Detection service running")
+            .setContentText("正在后台采集全屏并移动中心，可切到其他应用")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setContentIntent(launch)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
+    }
 
     companion object {
         private const val TAG = "DetectionService"
@@ -225,7 +277,16 @@ class DetectionService : Service() {
         const val EXTRA_CLASS_NAMES = "class_names"
         const val EXTRA_MODEL_PATH = "model_path"
         const val EXTRA_MOVE_CENTER = "move_center"
+        const val EXTRA_START_GENERATION = "start_generation"
+        private const val CONNECT_ATTEMPTS = 20
+        private const val CONNECT_RETRY_MS = 500L
 
         val DEFAULT_CLASS_NAMES = arrayOf("enemy")
     }
+
+    private data class AimFrame(
+        val detections: List<DetectResult>,
+        val width: Int,
+        val height: Int,
+    )
 }

@@ -18,7 +18,7 @@ YOLO 研究原型：在 root Android 设备上采集画面，用 YOLOv8 检测�
 ## 当前基线与首台设备
 
 - 当前是未完成集成的脚手架。训练、Native、Android 的主要文件存在，但没有端到端验收记录；已发现的编译和接口问题见 PROGRESS。
-- `training/data/incoming/` 中已有两套隔离候选数据：Roboflow v1 原图集，以及从 Ultralytics Platform 公开 API 下载的 14,820 张合并集。两者原始类别均为 `head` / `person`；合并集没有许可证声明，且 416/640 方形图片包含原图、裁剪图和空标注图片。它们尚未按本项目 `enemy` 语义复核，也没有来源对局分组证据；不能直接作为正式训练集。仓库仍没有批准的单类训练数据、训练权重、TFLite 资产、自动化测试或 CI；Gradle Wrapper 与 M1 构建入口已经落地。
+- `training/data/incoming/` 中只保留 Ultralytics Platform 公开 API 下载的 14,820 张候选集。原始类别为 `head` / `person`；没有许可证声明，且 416/640 方形图片包含原图、裁剪图和空标注图片。已另写出 `training/data/head_body/`（两类分开）。尚未按本项目语义复核，也没有来源对局分组证据。Roboflow v1 本地副本已按用户要求删除。仓库仍没有批准的正式训练数据、训练权重、TFLite 资产、自动化测试或 CI；Gradle Wrapper 与 M1 构建入口已经落地。
 - 用户指定首台验证设备：**红米 K70、第二代骁龙 8、最高 3.19GHz、12GB 内存 + 4GB 扩展内存、3200×1440 屏幕**。这些是用户提供的信息，未做真机核验。
 - 用户计划稍后 root。Android 版本、HyperOS/ROM 版本、root 方案、实际采集/截图分辨率仍待记录；不能假定已 root、adb 已连接或 SurfaceFlinger/GPU 兼容。
 - 构建配置 `minSdk=28` 对应 Android 9，`targetSdk=34`；这只是配置，不是 API 28+ 全版本兼容证明。扩展内存不等同于额外物理 RAM，也不构成性能保证。
@@ -37,7 +37,7 @@ YOLO 研究原型：在 root Android 设备上采集画面，用 YOLOv8 检测�
 
 ## 数据与模型约定
 
-- 唯一类别 `0: enemy`，YOLO 标签为 `class_id cx cy w h`，坐标相对于原始截图归一化到 0–1，宽高必须大于 0。类别变更必须同步 `dataset.yaml`、Service 默认类别、调用方类别及模型元数据。
+- 唯一类别约定仍是部署中的 `0: enemy`。incoming 候选数据原始为 `head` / `person`；已另写出 `training/data/head_body/`（`0: head`、`1: person`），**不再把头和身体合成一类**。进行中的 `yolo_research` 单类训练仍用原来的 `data/images`+`data/labels`。类别变更要上新模型时必须同步 `dataset.yaml`、Service 默认类别、调用方类别及模型元数据。
 - 标注所有能可靠确认的可见 `enemy` 目标，包括远处 5–10px 小目标。先定义队友、遮挡、倒地、尸体和不确定小点的处理规则；无法判断的目标进入复核，不强行猜标。
 - 数据采集同时覆盖距离、地图、光照、运动模糊、敌人数和困难负样本。按对局或连续视频片段划分 train/val/test，避免相邻帧泄漏；保留独立测试集与数据版本。
 - 200 张可作为采集起点，1000+ 是后续规模方向，不是精度验收门槛。采集数量、标注质量与实际远距召回分开报告。
